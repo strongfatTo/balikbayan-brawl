@@ -15,29 +15,25 @@ Two players (or you vs. AI) each have **$10** and a **5x5 grid** (25 cells) to f
 - **Animated Battles**: Watch your items fight it out with HP bars, damage numbers, and a detailed battle log.
 
 ## 🛠️ Tech Stack
-- **Backend**: Node.js, Express, Socket.io
+- **Backend**: Supabase (Database & Realtime Channels)
 - **Frontend**: Vanilla JavaScript (ES Modules), CSS Grid, HTML5
-- **Communication**: Real-time bidirectional events via WebSockets
+- **Architecture**: Serverless Multiplayer (Client-side coordination)
 
 ## 🚀 How to Run Locally
 
 1.  **Clone the repository** (or download the files).
-2.  **Install dependencies**:
-    ```bash
-    npm install
-    ```
-3.  **Start the server**:
-    ```bash
-    npm start
-    ```
-4.  **Open the game**:
-    Navigate to `http://localhost:3000` in your browser.
-    *To test multiplayer, open the same link in a second tab or window.*
+2.  **No installation needed** (uses CDN for Supabase SDK).
+3.  **Open the game**:
+    Since the project uses ES Modules, you need a local web server. You can use:
+    - **Live Server** (VS Code extension)
+    - **Python**: `python -m http.server`
+    - **Node**: `npx serve public`
+4.  Navigate to the local URL (usually `http://localhost:5500` or similar).
 
 ## 📖 How to Play
 
 1.  **Login**: Enter your name and either a **Room ID** (to play with others) or click **FIGHT AI**.
-2.  **Lobby**: In multiplayer, wait for others to join. The first player is the Admin and can click **START GAME**.
+2.  **Lobby**: In multiplayer, wait for others to join. The first player to join is the **Admin** and can click **START GAME**.
 3.  **Shopping Phase**:
     - Click an item in the shop to select it.
     - **Press R** to rotate the item.
@@ -63,11 +59,10 @@ Two players (or you vs. AI) each have **$10** and a **5x5 grid** (25 cells) to f
 
 ## ☁️ Deployment
 
-You can deploy this app easily to platforms like **Render** or **Heroku**:
+You can deploy this app as a **Static Site** (no Node.js server required):
 1.  Push your code to a GitHub repository.
-2.  Connect the repository to Render (Web Service).
-3.  Set **Build Command** to `npm install` and **Start Command** to `npm start`.
-4.  Render will provide a public URL for your game.
+2.  Connect to **Vercel**, **Netlify**, or **GitHub Pages**.
+3.  The app connects directly to Supabase for all multiplayer and database logic.
 
 ---
 *Pack with love. Fight with power. Send it home!* 🇵🇭

@@ -15,13 +15,20 @@ let lastHoverGx = -1, lastHoverGy = -1;
 let gridBuilt = false;
 
 // Multiplayer state
-let socket = null;
+let supabase = null;
+let channel = null;
 let currentRoomId = null;
 let playerName = '';
 let gameStatus = 'login'; // login, lobby, shopping, waiting, battling, results
 let isAIGame = false;
 let currentRound = 1;
-let aiScores = { player: 0, ai: 0, record: { w: 0, d: 0, l: 0 } };
+let tournamentScores = { player: 0, rival: 0, record: { w: 0, d: 0, l: 0 } };
+let isAdmin = false;
+let presenceState = {};
+let myPresenceId = null;
+
+const SUPABASE_URL = 'https://svjwcroknmzdkkjxclww.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2andjcm9rbm16ZGtranhjbHd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2NTI4ODgsImV4cCI6MjA4ODIyODg4OH0.P6E46tZ2oGUCHu7lE7BuzCbbNyuTOnIiRtMIM50L_OY';
 
 // ═══════════════════════════════════════════════════════
 //  INIT
@@ -38,7 +45,8 @@ function init() {
   lastHoverGy = -1;
   isAIGame = false;
   currentRound = 1;
-  aiScores = { player: 0, ai: 0, record: { w: 0, d: 0, l: 0 } };
+  tournamentScores = { player: 0, rival: 0, record: { w: 0, d: 0, l: 0 } };
+  isAdmin = false;
   
   // UI Reset
   document.getElementById('login-phase').style.display = 'flex';
@@ -54,8 +62,8 @@ function init() {
   renderRules();
   updateStats();
   
-  if (!socket) {
-    initMultiplayer();
+  if (!supabase) {
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   }
 }
 
@@ -73,63 +81,210 @@ function hideOverlay() {
 }
 
 // ═══════════════════════════════════════════════════════
-//  MULTIPLAYER LOGIC
+//  MULTIPLAYER LOGIC (Supabase Realtime)
 // ═══════════════════════════════════════════════════════
-function initMultiplayer() {
-  if (socket) return; // Already initialized
-  socket = io();
+async function initMultiplayer(roomId) {
+  if (channel) {
+    supabase.removeChannel(channel);
+  }
 
-  socket.on('connect', () => {
-    console.log('Connected to server');
+  myPresenceId = Math.random().toString(36).substring(7);
+  channel = supabase.channel(`room:${roomId}`, {
+    config: { presence: { key: myPresenceId } }
   });
 
-  socket.on('room_update', (data) => {
-    currentRoomId = data.roomId;
-    updateLobbyUI(data.players);
-    if (data.state === 'LOBBY') {
-      switchPhase('lobby');
-      gameStatus = 'lobby';
-    }
-  });
-
-  socket.on('round_start', (data) => {
-    gameStatus = 'shopping';
-    document.getElementById('round-display').textContent = `Round ${data.round} / ${data.maxRounds}`;
-    hideOverlay();
-    switchPhase('shopping');
-    resetForNewRound();
-  });
-
-  socket.on('waiting_for_opponent', () => {
-    gameStatus = 'waiting';
-    showOverlay('Waiting...', 'Your rival is still packing their box.');
-  });
-
-  socket.on('battle_start', (data) => {
-    gameStatus = 'battling';
-    hideOverlay();
-    switchPhase('battle');
-    
-    import('./battle.js').then(module => {
-       module.startMultiplayerBattle(placedItems, playerGrid, data.enemyItems, data.enemyGrid, (result) => {
-         socket.emit('report_battle_result', { roomId: currentRoomId, result });
-       });
+  channel
+    .on('presence', { event: 'sync' }, () => {
+      presenceState = channel.presenceState();
+      updateLobbyUIFromPresence();
+    })
+    .on('broadcast', { event: 'round_start' }, (payload) => {
+      handleRoundStart(payload.round, payload.maxRounds);
+    })
+    .on('broadcast', { event: 'submit_grid' }, (payload) => {
+      // Logic for admin to match players
+      if (isAdmin) checkAndMatchPlayers();
+    })
+    .on('broadcast', { event: 'battle_start' }, (payload) => {
+      if (payload.targetId === myPresenceId) {
+        handleBattleStart(payload);
+      }
+    })
+    .on('broadcast', { event: 'battle_bye' }, (payload) => {
+      if (payload.targetId === myPresenceId) {
+        handleBattleBye(payload.message);
+      }
+    })
+    .on('broadcast', { event: 'tournament_results' }, (payload) => {
+      gameStatus = 'results';
+      showLeaderboard(payload.leaderboard);
+    })
+    .subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        await channel.track({
+          id: myPresenceId,
+          name: playerName,
+          joinedAt: new Date().toISOString(),
+          score: 0,
+          record: { w: 0, d: 0, l: 0 },
+          submitted: null,
+          processedResult: false
+        });
+        gameStatus = 'lobby';
+        switchPhase('lobby');
+      }
     });
+}
+
+function updateLobbyUIFromPresence() {
+  const list = document.getElementById('player-list');
+  const roomDisplay = document.getElementById('lobby-room-display');
+  const startBtn = document.getElementById('btn-start-game');
+  
+  roomDisplay.textContent = `Room: ${currentRoomId}`;
+  list.innerHTML = '';
+  
+  const players = [];
+  for (const key in presenceState) {
+    players.push(presenceState[key][0]);
+  }
+  
+  // Sort by join time to determine admin (first one)
+  players.sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt));
+  
+  isAdmin = players[0]?.id === myPresenceId;
+  
+  players.forEach(p => {
+    const li = document.createElement('li');
+    li.textContent = p.name + (p.id === players[0].id ? ' (Admin)' : '');
+    list.appendChild(li);
   });
 
-  socket.on('battle_bye', (data) => {
-    showOverlay('Bye Round', data.message);
-    // After a short delay, server will start next round or end tournament
-  });
+  startBtn.style.display = isAdmin ? 'inline-block' : 'none';
+  document.getElementById('lobby-status').textContent = players.length < 2 ? 'Waiting for more players...' : 'Ready to start!';
+}
 
-  socket.on('tournament_results', (data) => {
-    gameStatus = 'results';
-    showLeaderboard(data.leaderboard);
-  });
+function handleRoundStart(round, maxRounds) {
+  gameStatus = 'shopping';
+  currentRound = round;
+  document.getElementById('round-display').textContent = `Round ${round} / ${maxRounds}`;
+  hideOverlay();
+  switchPhase('shopping');
+  resetForNewRound();
+}
 
-  socket.on('error', (data) => {
-    alert(data.message);
+function handleBattleStart(data) {
+  gameStatus = 'battling';
+  hideOverlay();
+  switchPhase('battle');
+  
+  import('./battle.js').then(module => {
+     module.startMultiplayerBattle(placedItems, playerGrid, data.enemyItems, data.enemyGrid, async (result) => {
+       await reportBattleResult(result);
+     });
   });
+}
+
+async function reportBattleResult(result) {
+  // Update local scores for UI if needed, but primary sync is via presence
+  const myState = presenceState[myPresenceId][0];
+  if (result === 'win') {
+    myState.score += 3;
+    myState.record.w++;
+  } else if (result === 'draw') {
+    myState.score += 2;
+    myState.record.d++;
+  } else {
+    myState.score += 1;
+    myState.record.l++;
+  }
+  myState.processedResult = true;
+  
+  await channel.track(myState);
+  
+  if (isAdmin) {
+    // Admin checks if all results are in
+    setTimeout(() => checkRoundCompletion(), 2000);
+  }
+}
+
+function handleBattleBye(message) {
+  showOverlay('Bye Round', message);
+  // Auto-win for bye
+  reportBattleResult('win');
+}
+
+// ═══════════════════════════════════════════════════════
+//  ADMIN COORDINATION LOGIC
+// ═══════════════════════════════════════════════════════
+async function checkAndMatchPlayers() {
+  const players = [];
+  for (const key in presenceState) {
+    players.push(presenceState[key][0]);
+  }
+  
+  const allSubmitted = players.every(p => p.submitted);
+  if (allSubmitted && players.length >= 2) {
+    // Generate matches
+    const shuffled = [...players].sort(() => Math.random() - 0.5);
+    for (let i = 0; i < shuffled.length; i += 2) {
+      if (i + 1 < shuffled.length) {
+        const p1 = shuffled[i];
+        const p2 = shuffled[i+1];
+        
+        channel.send({
+          type: 'broadcast',
+          event: 'battle_start',
+          payload: { targetId: p1.id, enemyName: p2.name, enemyItems: p2.submitted.items, enemyGrid: p2.submitted.grid }
+        });
+        channel.send({
+          type: 'broadcast',
+          event: 'battle_start',
+          payload: { targetId: p2.id, enemyName: p1.name, enemyItems: p1.submitted.items, enemyGrid: p1.submitted.grid }
+        });
+      } else {
+        // Bye
+        channel.send({
+          type: 'broadcast',
+          event: 'battle_bye',
+          payload: { targetId: shuffled[i].id, message: "No opponent this round. You get a bye!" }
+        });
+      }
+    }
+  }
+}
+
+async function checkRoundCompletion() {
+  const players = [];
+  for (const key in presenceState) {
+    players.push(presenceState[key][0]);
+  }
+  
+  const allProcessed = players.every(p => p.processedResult);
+  if (allProcessed) {
+    if (currentRound >= 5) {
+      const leaderboard = players.map(p => ({
+        name: p.name,
+        score: p.score,
+        record: `${p.record.w}-${p.record.d}-${p.record.l}`
+      })).sort((a, b) => b.score - a.score);
+      
+      channel.send({ type: 'broadcast', event: 'tournament_results', payload: { leaderboard } });
+      
+      // Save winner to DB
+      await supabase.from('leaderboard').insert(leaderboard.map(entry => ({
+        player_name: entry.name,
+        score: entry.score,
+        wins: parseInt(entry.record.split('-')[0]),
+        draws: parseInt(entry.record.split('-')[1]),
+        losses: parseInt(entry.record.split('-')[2])
+      })));
+    } else {
+      setTimeout(() => {
+        channel.send({ type: 'broadcast', event: 'round_start', payload: { round: currentRound + 1, maxRounds: 5 } });
+      }, 3000);
+    }
+  }
 }
 
 function switchPhase(phase) {
@@ -197,15 +352,14 @@ window.joinRoom = function() {
   const nameInput = document.getElementById('player-name-input');
   const roomInput = document.getElementById('room-id-input');
   playerName = nameInput.value.trim();
-  const roomId = roomInput.value.trim();
+  currentRoomId = roomInput.value.trim();
   
-  if (!playerName || !roomId) {
+  if (!playerName || !currentRoomId) {
     alert('Please enter both name and Room ID');
     return;
   }
   
-  socket.emit('join_room', { roomId, playerName });
-  gameStatus = 'lobby';
+  initMultiplayer(currentRoomId);
 };
 
 window.startAIGame = function() {
@@ -214,7 +368,7 @@ window.startAIGame = function() {
   isAIGame = true;
   gameStatus = 'shopping';
   currentRound = 1;
-  aiScores = { player: 0, ai: 0, record: { w: 0, d: 0, l: 0 } };
+  tournamentScores = { player: 0, ai: 0, record: { w: 0, d: 0, l: 0 } };
   
   document.getElementById('round-display').textContent = `Round 1 / 5`;
   switchPhase('shopping');
@@ -222,7 +376,13 @@ window.startAIGame = function() {
 };
 
 window.requestStartGame = function() {
-  socket.emit('request_start_game');
+  if (isAdmin && channel) {
+    channel.send({
+      type: 'broadcast',
+      event: 'round_start',
+      payload: { round: 1, maxRounds: 5 }
+    });
+  }
 };
 
 window.backToLobby = function() {
@@ -236,9 +396,9 @@ window.backToLobby = function() {
 
 window.backToStartMenu = function() {
   if (confirm('Are you sure you want to leave the current game?')) {
-    if (socket && socket.connected) {
-      socket.disconnect();
-      socket = null; // Forces re-init on next login
+    if (channel) {
+      supabase.removeChannel(channel);
+      channel = null;
     }
     init();
   }
@@ -284,22 +444,22 @@ function generateAIGrid() {
 
 function handleAIResult(result) {
   if (result === 'win') {
-    aiScores.player += 3;
-    aiScores.record.w++;
+    tournamentScores.player += 3;
+    tournamentScores.record.w++;
   } else if (result === 'draw') {
-    aiScores.player += 2;
-    aiScores.ai += 2;
-    aiScores.record.d++;
+    tournamentScores.player += 2;
+    tournamentScores.ai += 2;
+    tournamentScores.record.d++;
   } else {
-    aiScores.ai += 3;
-    aiScores.record.l++;
+    tournamentScores.ai += 3;
+    tournamentScores.record.l++;
   }
   
   setTimeout(() => {
     if (currentRound >= 5) {
       const leaderboard = [
-        { name: playerName, score: aiScores.player, record: `${aiScores.record.w}-${aiScores.record.d}-${aiScores.record.l}` },
-        { name: 'AI Rival', score: aiScores.ai, record: `${aiScores.record.l}-${aiScores.record.d}-${aiScores.record.w}` }
+        { name: playerName, score: tournamentScores.player, record: `${tournamentScores.record.w}-${tournamentScores.record.d}-${tournamentScores.record.l}` },
+        { name: 'AI Rival', score: tournamentScores.ai, record: `${tournamentScores.record.l}-${tournamentScores.record.d}-${tournamentScores.record.w}` }
       ].sort((a, b) => b.score - a.score);
       showLeaderboard(leaderboard);
     } else {
@@ -588,7 +748,7 @@ window.clearAllItems = function() {
   updateStats();
 };
 
-window.startBattle = function() {
+window.startBattle = async function() {
   if (placedItems.length === 0) return;
   
   if (isAIGame) {
@@ -603,11 +763,20 @@ window.startBattle = function() {
     return;
   }
   
-  if (socket && gameStatus === 'shopping') {
-    socket.emit('submit_grid', {
-      roomId: currentRoomId,
-      items: placedItems,
-      grid: playerGrid
+  if (channel && gameStatus === 'shopping') {
+    gameStatus = 'waiting';
+    showOverlay('Waiting...', 'Sending your box to the rival...');
+    
+    // Update our presence state with the submitted items
+    const myState = presenceState[myPresenceId][0];
+    myState.submitted = { items: placedItems, grid: playerGrid };
+    await channel.track(myState);
+    
+    // Tell the channel we submitted
+    channel.send({
+      type: 'broadcast',
+      event: 'submit_grid',
+      payload: { id: myPresenceId }
     });
   }
 };
