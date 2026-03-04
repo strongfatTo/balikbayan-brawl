@@ -1,0 +1,291 @@
+import { ITEMS, GRID_W, GRID_H, checkMechanic, getEffectiveStats } from './gameData.js';
+
+// ═══════════════════════════════════════════════════════
+//  BATTLE — with 2D animation (Multiplayer Version)
+// ═══════════════════════════════════════════════════════
+export function startMultiplayerBattle(placedItems, playerGrid, enemyItems, enemyGrid, onComplete) {
+  renderBattleGrid('battle-grid-player', playerGrid);
+  renderBattleGrid('battle-grid-enemy', enemyGrid);
+
+  const playerUnits = placedItems.map((pi, idx) => {
+    const s = getEffectiveStats(pi, placedItems, playerGrid);
+    const m = checkMechanic(pi, placedItems, playerGrid);
+    return { id: `p-${idx}`, name: pi.item.name, emoji: pi.item.emoji, colorClass: pi.item.colorClass, hp: s.hp, maxHp: s.hp, atk: s.atk, shield: s.shield, bonus: m.text };
+  });
+
+  const enemyUnits = enemyItems.map((pi, idx) => {
+    const s = getEffectiveStats(pi, enemyItems, enemyGrid);
+    const m = checkMechanic(pi, enemyItems, enemyGrid);
+    return { id: `e-${idx}`, name: pi.item.name, emoji: pi.item.emoji, colorClass: pi.item.colorClass, hp: s.hp, maxHp: s.hp, atk: s.atk, shield: s.shield, bonus: m.text };
+  });
+
+  renderTeamList('team-list-player', playerUnits);
+  renderTeamList('team-list-enemy', enemyUnits);
+
+  const pTotalHp = playerUnits.reduce((s,u)=>s+u.hp + (u.shield||0), 0);
+  const pTotalAtk = playerUnits.reduce((s,u)=>s+u.atk, 0);
+  const eTotalHp = enemyUnits.reduce((s,u)=>s+u.hp + (u.shield||0), 0);
+  const eTotalAtk = enemyUnits.reduce((s,u)=>s+u.atk, 0);
+  
+  document.getElementById('battle-hp-player').textContent = pTotalHp;
+  document.getElementById('battle-atk-player').textContent = pTotalAtk;
+  document.getElementById('battle-hp-enemy').textContent = eTotalHp;
+  document.getElementById('battle-atk-enemy').textContent = eTotalAtk;
+
+  runAnimatedBattle(playerUnits, enemyUnits, onComplete);
+}
+
+function renderTeamList(containerId, units) {
+  const container = document.querySelector(`#${containerId} .unit-list-container`);
+  container.innerHTML = '';
+  units.forEach(u => {
+    const el = document.createElement('div');
+    el.className = 'unit-list-item';
+    el.dataset.id = u.id;
+    el.innerHTML = `
+      <span class="emoji">${u.emoji}</span>
+      <span class="name">${u.name}</span>
+      <span class="hp-small">HP:${u.hp}</span>
+    `;
+    container.appendChild(el);
+  });
+}
+
+function updateTeamListUI(playerUnits, enemyUnits) {
+  playerUnits.forEach(u => {
+    const el = document.querySelector(`[data-id="${u.id}"]`);
+    if (!el) return;
+    if (u.hp <= 0) el.classList.add('defeated');
+    else el.querySelector('.hp-small').textContent = `HP:${u.hp}`;
+  });
+  enemyUnits.forEach(u => {
+    const el = document.querySelector(`[data-id="${u.id}"]`);
+    if (!el) return;
+    if (u.hp <= 0) el.classList.add('defeated');
+    else el.querySelector('.hp-small').textContent = `HP:${u.hp}`;
+  });
+
+  // Highlight active units
+  document.querySelectorAll('.unit-list-item').forEach(el => el.classList.remove('active'));
+  const pa = playerUnits.find(u => u.hp > 0);
+  const ea = enemyUnits.find(u => u.hp > 0);
+  if (pa) document.querySelector(`[data-id="${pa.id}"]`)?.classList.add('active');
+  if (ea) document.querySelector(`[data-id="${ea.id}"]`)?.classList.add('active');
+}
+
+function renderBattleGrid(containerId, grid) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  for (let gy = GRID_H - 1; gy >= 0; gy--) {
+    for (let gx = 0; gx < GRID_W; gx++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      const occupant = grid[gy][gx];
+      if (occupant) {
+        cell.classList.add('occupied', occupant.item.colorClass);
+        cell.textContent = occupant.item.emoji;
+      }
+      container.appendChild(cell);
+    }
+  }
+}
+
+// ── Animated battle ──
+function createSprite(unit, side) {
+  const el = document.createElement('div');
+  el.className = `battle-sprite ${side}-sprite`;
+  const hpPct = Math.max(0, unit.hp / unit.maxHp * 100);
+  const hpClass = hpPct > 50 ? '' : hpPct > 25 ? 'mid' : 'low';
+  el.innerHTML = `
+    <div class="sprite-emoji">${unit.emoji}</div>
+    <div class="sprite-name">${unit.name}</div>
+    <div class="hp-bar-bg"><div class="hp-bar ${hpClass}" style="width:${hpPct}%"></div></div>
+  `;
+  return el;
+}
+
+function updateSpriteHp(spriteEl, unit) {
+  const hpPct = Math.max(0, unit.hp / unit.maxHp * 100);
+  const bar = spriteEl.querySelector('.hp-bar');
+  bar.style.width = hpPct + '%';
+  bar.className = 'hp-bar' + (hpPct > 50 ? '' : hpPct > 25 ? ' mid' : ' low');
+}
+
+function showDmgNumber(stage, x, y, dmg, isPlayer) {
+  const el = document.createElement('div');
+  el.className = 'dmg-number' + (isPlayer ? '' : ' player-dmg');
+  el.textContent = `-${dmg}`;
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  stage.appendChild(el);
+  setTimeout(() => el.remove(), 800);
+}
+
+function runAnimatedBattle(playerUnits, enemyUnits, onComplete) {
+  const stage = document.getElementById('battle-stage');
+  const log = document.getElementById('battle-log');
+  log.innerHTML = '';
+
+  // Clear old sprites
+  stage.querySelectorAll('.battle-sprite, .dmg-number').forEach(e => e.remove());
+
+  // Log bonuses
+  playerUnits.forEach(u => {
+    if (u.bonus) addLog(log, 'bonus-line', `  ${u.emoji} ${u.name} gains ${u.bonus}`);
+  });
+  enemyUnits.forEach(u => {
+    if (u.bonus) addLog(log, 'bonus-line', `  Rival's ${u.emoji} ${u.name} gains ${u.bonus}`);
+  });
+
+  const pAlive = () => playerUnits.filter(u => u.hp > 0);
+  const eAlive = () => enemyUnits.filter(u => u.hp > 0);
+
+  let pSprite = null, eSprite = null;
+  let roundNum = 0; // Renamed to roundNum to avoid confusion with tournament round
+
+  function spawnSprites() {
+    const pa = pAlive(), ea = eAlive();
+    
+    // Update waiting list counts
+    updateWaitingList(pa.length, ea.length);
+
+    if (pa.length === 0 || ea.length === 0) return;
+    
+    if (pSprite) pSprite.remove();
+    if (eSprite) eSprite.remove();
+    
+    pSprite = createSprite(pa[0], 'player');
+    eSprite = createSprite(ea[0], 'enemy');
+    stage.appendChild(pSprite);
+    stage.appendChild(eSprite);
+
+    updateTeamListUI(playerUnits, enemyUnits);
+  }
+
+  function updateWaitingList(pCount, eCount) {
+    document.getElementById('battle-hp-player').parentElement.querySelector('.label').textContent = `Your HP (${pCount} left)`;
+    document.getElementById('battle-hp-enemy').parentElement.querySelector('.label').textContent = `Rival HP (${eCount} left)`;
+  }
+
+  spawnSprites();
+
+  function doRound() {
+    roundNum++;
+    const pa = pAlive(), ea = eAlive();
+    if (pa.length === 0 || ea.length === 0) {
+      endBattle(pa.length, ea.length, onComplete);
+      return;
+    }
+
+    addLog(log, 'round-header', `--- Round ${roundNum} ---`);
+    const pUnit = pa[0], eUnit = ea[0];
+    const dmgToEnemy = Math.max(1, pUnit.atk);
+    const dmgToPlayer = Math.max(1, eUnit.atk);
+
+    // Phase 1: both charge forward (attack animation)
+    pSprite.classList.add('sprite-attacking-right');
+    eSprite.classList.add('sprite-attacking-left');
+
+    setTimeout(() => {
+      // Phase 2: impact — apply damage, show numbers, shake
+      eUnit.hp -= dmgToEnemy;
+      pUnit.hp -= dmgToPlayer;
+
+      // Damage numbers
+      const pRect = pSprite.getBoundingClientRect();
+      const eRect = eSprite.getBoundingClientRect();
+      const stageRect = stage.getBoundingClientRect();
+      showDmgNumber(stage, eRect.left - stageRect.left + 30, eRect.top - stageRect.top - 10, dmgToEnemy, false);
+      showDmgNumber(stage, pRect.left - stageRect.left + 30, pRect.top - stageRect.top - 10, dmgToPlayer, true);
+
+      // Flash and shake
+      pSprite.classList.add('sprite-hit', 'sprite-flash');
+      eSprite.classList.add('sprite-hit', 'sprite-flash');
+
+      updateSpriteHp(pSprite, pUnit);
+      updateSpriteHp(eSprite, eUnit);
+      updateTeamListUI(playerUnits, enemyUnits);
+
+      addLog(log, 'hit-line', `  ${pUnit.emoji} ${pUnit.name} hits ${eUnit.emoji} ${eUnit.name} for ${dmgToEnemy} dmg [${Math.max(0,eUnit.hp)}/${eUnit.maxHp}]`);
+      addLog(log, 'hit-line', `  ${eUnit.emoji} ${eUnit.name} hits ${pUnit.emoji} ${pUnit.name} for ${dmgToPlayer} dmg [${Math.max(0,pUnit.hp)}/${pUnit.maxHp}]`);
+
+      // Update totals
+      document.getElementById('battle-hp-player').textContent = Math.max(0, pAlive().reduce((s,u)=>s+u.hp,0));
+      document.getElementById('battle-hp-enemy').textContent = Math.max(0, eAlive().reduce((s,u)=>s+u.hp,0));
+      log.scrollTop = log.scrollHeight;
+    }, 300);
+
+    setTimeout(() => {
+      // Phase 3: clean up animations
+      pSprite.classList.remove('sprite-attacking-right', 'sprite-hit', 'sprite-flash');
+      eSprite.classList.remove('sprite-attacking-left', 'sprite-hit', 'sprite-flash');
+
+      let deathDelay = 0;
+
+      // Check deaths
+      if (eUnit.hp <= 0) {
+        addLog(log, 'kill-line', `  ${eUnit.emoji} ${eUnit.name} (Rival) DESTROYED!`);
+        eSprite.classList.add('sprite-dying');
+        deathDelay = 600;
+      }
+      if (pUnit.hp <= 0) {
+        addLog(log, 'kill-line', `  ${pUnit.emoji} ${pUnit.name} (Yours) DESTROYED!`);
+        pSprite.classList.add('sprite-dying');
+        deathDelay = 600;
+      }
+
+      setTimeout(() => {
+        const pa2 = pAlive(), ea2 = eAlive();
+        if (pa2.length === 0 || ea2.length === 0) {
+          document.getElementById('battle-hp-player').textContent = Math.max(0, pa2.reduce((s,u)=>s+u.hp,0));
+          document.getElementById('battle-hp-enemy').textContent = Math.max(0, ea2.reduce((s,u)=>s+u.hp,0));
+          updateWaitingList(pa2.length, ea2.length);
+          endBattle(pa2.length, ea2.length, onComplete);
+          return;
+        }
+        // New sprites for new front-line units
+        spawnSprites();
+        setTimeout(doRound, 500);
+      }, deathDelay);
+    }, 800);
+  }
+
+  setTimeout(doRound, 600);
+}
+
+function addLog(container, cls, text) {
+  const div = document.createElement('div');
+  div.className = cls;
+  div.textContent = text;
+  container.appendChild(div);
+}
+
+function endBattle(pAlive, eAlive, onComplete) {
+  const overlay = document.getElementById('result-overlay');
+  const title = document.getElementById('result-title');
+  const subtitle = document.getElementById('result-subtitle');
+  let result = 'draw';
+  
+  if (pAlive > 0 && eAlive === 0) {
+    title.textContent = 'VICTORY!';
+    title.className = 'win';
+    subtitle.textContent = `Your Balikbayan box was packed with love and power! ${pAlive} unit(s) survived.`;
+    result = 'win';
+  } else if (pAlive === 0 && eAlive > 0) {
+    title.textContent = 'DEFEAT';
+    title.className = 'lose';
+    subtitle.textContent = `Your rival's box was stronger. Try a different packing strategy!`;
+    result = 'loss';
+  } else {
+    title.textContent = 'DRAW';
+    title.className = 'draw';
+    subtitle.textContent = `Both boxes were evenly matched!`;
+    result = 'draw';
+  }
+  
+  overlay.classList.add('show');
+  
+  if (onComplete) {
+    onComplete(result);
+  }
+}
