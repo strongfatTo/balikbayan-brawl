@@ -91,12 +91,38 @@ body {
   overflow-y: auto;
 }
 #player-list { list-style: none; }
-#player-list li {
+/* ── Player List ── */
+.player-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   padding: 8px 12px;
   border-bottom: 1px solid #0f3460;
   color: #4ecca3;
   font-weight: bold;
 }
+.player-name { flex: 1; }
+.admin-badge {
+  font-size: 10px;
+  color: #e94560;
+  margin-left: 5px;
+  font-style: italic;
+}
+.btn-kick-mini {
+  background: #1a1a2e;
+  border: 1px solid #e94560;
+  color: #e94560;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-kick-mini:hover {
+  background: #e94560;
+  color: #fff;
+}
+
 #player-list li:last-child { border-bottom: none; }
 #lobby-status { margin-bottom: 20px; color: #a8a8b8; font-style: italic; }
 
