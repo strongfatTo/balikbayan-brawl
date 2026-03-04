@@ -27,6 +27,7 @@ let isAdmin = false;
 let presenceState = {};
 let myPresenceId = null;
 let lobbyTimer = null;
+let isAdvancingRound = false;
 
 const SUPABASE_URL = 'https://svjwcroknmzdkkjxclww.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2andjcm9rbm16ZGtranhjbHd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2NTI4ODgsImV4cCI6MjA4ODIyODg4OH0.P6E46tZ2oGUCHu7lE7BuzCbbNyuTOnIiRtMIM50L_OY';
@@ -48,6 +49,7 @@ function init() {
   currentRound = 1;
   tournamentScores = { player: 0, rival: 0, record: { w: 0, d: 0, l: 0 } };
   isAdmin = false;
+  isAdvancingRound = false;
   if (lobbyTimer) { clearTimeout(lobbyTimer); lobbyTimer = null; }
   
   // UI Reset
@@ -114,14 +116,15 @@ async function initMultiplayer(roomId) {
       }
 
       // Admin checks for game progress triggers
-      if (isAdmin) {
+      if (isAdmin && !isAdvancingRound) {
         const allSubmitted = players.every(p => p.submitted);
         const allProcessed = players.every(p => p.processedResult);
+        const allOnSameRound = players.every(p => p.currentRound === currentRound);
         
         if ((gameStatus === 'shopping' || gameStatus === 'waiting') && allSubmitted && players.length >= 2) {
           console.log('Sync check: All submitted via presence');
           checkAndMatchPlayers();
-        } else if (gameStatus === 'battling' && allProcessed && players.length >= 2) {
+        } else if (gameStatus === 'battling' && allProcessed && allOnSameRound && players.length >= 2) {
           console.log('Sync check: All results processed via presence');
           checkRoundCompletion();
         }
@@ -381,6 +384,8 @@ async function checkAndMatchPlayers() {
 }
 
 async function checkRoundCompletion() {
+  if (!isAdmin || isAdvancingRound) return;
+  
   const players = [];
   for (const key in presenceState) {
     players.push(presenceState[key][0]);
@@ -388,7 +393,11 @@ async function checkRoundCompletion() {
   
   console.log('Checking round completion. Players processed:', players.filter(p => p.processedResult).length, '/', players.length);
   const allProcessed = players.every(p => p.processedResult);
-  if (allProcessed && players.length >= 2) {
+  const allOnSameRound = players.every(p => p.currentRound === currentRound);
+
+  if (allProcessed && allOnSameRound && players.length >= 2) {
+    isAdvancingRound = true; // Lock to prevent multiple triggers
+    
     if (currentRound >= 5) {
       const leaderboard = players.map(p => ({
         name: p.name,
@@ -417,7 +426,10 @@ async function checkRoundCompletion() {
       const payload = { round: nextR, maxRounds: 5 };
       channel.send({ type: 'broadcast', event: 'round_start', payload: payload });
       // Trigger locally for admin
-      handleRoundStart(nextR, 5);
+      await handleRoundStart(nextR, 5);
+      
+      // Release lock after a short delay to allow presence to sync the new round state
+      setTimeout(() => { isAdvancingRound = false; }, 2000);
     }
   }
 }
