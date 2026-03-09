@@ -22,14 +22,10 @@ export function startMultiplayerBattle(placedItems, playerGrid, enemyItems, enem
   renderTeamList('team-list-player', playerUnits);
   renderTeamList('team-list-enemy', enemyUnits);
 
-  const pTotalHp = playerUnits.reduce((s,u)=>s+u.hp + (u.shield||0), 0);
   const pTotalAtk = playerUnits.reduce((s,u)=>s+u.atk, 0);
-  const eTotalHp = enemyUnits.reduce((s,u)=>s+u.hp + (u.shield||0), 0);
   const eTotalAtk = enemyUnits.reduce((s,u)=>s+u.atk, 0);
   
-  document.getElementById('battle-hp-player').textContent = pTotalHp;
   document.getElementById('battle-atk-player').textContent = pTotalAtk;
-  document.getElementById('battle-hp-enemy').textContent = eTotalHp;
   document.getElementById('battle-atk-enemy').textContent = eTotalAtk;
 
   runAnimatedBattle(playerUnits, enemyUnits, onComplete);
@@ -38,34 +34,41 @@ export function startMultiplayerBattle(placedItems, playerGrid, enemyItems, enem
 function renderTeamList(containerId, units) {
   const container = document.querySelector(`#${containerId} .unit-list-container`);
   container.innerHTML = '';
-  units.forEach(u => {
+  units.forEach((u, idx) => {
     const el = document.createElement('div');
     el.className = 'unit-list-item';
     el.dataset.id = u.id;
     el.innerHTML = `
+      <span class="order-num">${idx + 1}</span>
       <span class="emoji">${u.emoji}</span>
       <span class="name">${u.name}</span>
-      <span class="hp-small">HP:${u.hp}</span>
     `;
     container.appendChild(el);
   });
 }
 
 function updateTeamListUI(playerUnits, enemyUnits) {
-  playerUnits.forEach(u => {
+  playerUnits.forEach((u, idx) => {
     const el = document.querySelector(`[data-id="${u.id}"]`);
     if (!el) return;
-    if (u.hp <= 0) el.classList.add('defeated');
-    else el.querySelector('.hp-small').textContent = `HP:${u.hp}`;
+    if (u.hp <= 0) {
+      el.classList.add('defeated');
+      el.querySelector('.order-num').textContent = '✕';
+    } else {
+      el.classList.remove('defeated');
+    }
   });
-  enemyUnits.forEach(u => {
+  enemyUnits.forEach((u, idx) => {
     const el = document.querySelector(`[data-id="${u.id}"]`);
     if (!el) return;
-    if (u.hp <= 0) el.classList.add('defeated');
-    else el.querySelector('.hp-small').textContent = `HP:${u.hp}`;
+    if (u.hp <= 0) {
+      el.classList.add('defeated');
+      el.querySelector('.order-num').textContent = '✕';
+    } else {
+      el.classList.remove('defeated');
+    }
   });
 
-  // Highlight active units
   document.querySelectorAll('.unit-list-item').forEach(el => el.classList.remove('active'));
   const pa = playerUnits.find(u => u.hp > 0);
   const ea = enemyUnits.find(u => u.hp > 0);
@@ -94,12 +97,9 @@ function renderBattleGrid(containerId, grid) {
 function createSprite(unit, side) {
   const el = document.createElement('div');
   el.className = `battle-sprite ${side}-sprite`;
-  const hpPct = Math.max(0, unit.hp / unit.maxHp * 100);
-  const hpClass = hpPct > 50 ? '' : hpPct > 25 ? 'mid' : 'low';
   el.innerHTML = `
     <div class="sprite-emoji">${unit.emoji}</div>
     <div class="sprite-name">${unit.name}</div>
-    <div class="hp-bar-bg"><div class="hp-bar ${hpClass}" style="width:${hpPct}%"></div></div>
   `;
   return el;
 }
@@ -163,8 +163,8 @@ function runAnimatedBattle(playerUnits, enemyUnits, onComplete) {
   }
 
   function updateWaitingList(pCount, eCount) {
-    document.getElementById('battle-hp-player').parentElement.querySelector('.label').textContent = `Your HP (${pCount} left)`;
-    document.getElementById('battle-hp-enemy').parentElement.querySelector('.label').textContent = `Rival HP (${eCount} left)`;
+    document.getElementById('battle-atk-player').parentElement.querySelector('.label').textContent = `Your ATK`;
+    document.getElementById('battle-atk-enemy').parentElement.querySelector('.label').textContent = `Rival ATK`;
   }
 
   spawnSprites();
@@ -210,8 +210,8 @@ function runAnimatedBattle(playerUnits, enemyUnits, onComplete) {
       addLog(log, 'hit-line', `  ${eUnit.emoji} ${eUnit.name} hits ${pUnit.emoji} ${pUnit.name} for ${dmgToPlayer} dmg [${Math.max(0,pUnit.hp)}/${pUnit.maxHp}]`);
 
       // Update totals
-      document.getElementById('battle-hp-player').textContent = Math.max(0, pAlive().reduce((s,u)=>s+u.hp,0));
-      document.getElementById('battle-hp-enemy').textContent = Math.max(0, eAlive().reduce((s,u)=>s+u.hp,0));
+      document.getElementById('battle-atk-player').textContent = Math.max(0, pAlive().reduce((s,u)=>s+u.atk,0));
+      document.getElementById('battle-atk-enemy').textContent = Math.max(0, eAlive().reduce((s,u)=>s+u.atk,0));
       log.scrollTop = log.scrollHeight;
     }, 300);
 
@@ -237,8 +237,8 @@ function runAnimatedBattle(playerUnits, enemyUnits, onComplete) {
       setTimeout(() => {
         const pa2 = pAlive(), ea2 = eAlive();
         if (pa2.length === 0 || ea2.length === 0) {
-          document.getElementById('battle-hp-player').textContent = Math.max(0, pa2.reduce((s,u)=>s+u.hp,0));
-          document.getElementById('battle-hp-enemy').textContent = Math.max(0, ea2.reduce((s,u)=>s+u.hp,0));
+          document.getElementById('battle-atk-player').textContent = Math.max(0, pa2.reduce((s,u)=>s+u.atk,0));
+          document.getElementById('battle-atk-enemy').textContent = Math.max(0, ea2.reduce((s,u)=>s+u.atk,0));
           updateWaitingList(pa2.length, ea2.length);
           endBattle(pa2.length, ea2.length, onComplete);
           return;

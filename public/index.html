@@ -60,25 +60,29 @@
 
   <div class="grid-panel">
     <div class="grid-label">
-      Click item in shop, then click grid to place. Press <kbd>R</kbd> to rotate. Right-click to remove.
+      Click item in shop, then click grid to place. Press <kbd>R</kbd> to rotate shape.
     </div>
     <div class="grid-container">
       <div class="row-indicators">
-        <div class="ri ri-bonus-top">Y5 TOP</div>
-        <div class="ri ri-bonus-top">Y4</div>
-        <div class="ri">Y3</div>
-        <div class="ri ri-bonus-bottom">Y2</div>
-        <div class="ri ri-bonus-bottom">Y1 BTM</div>
+        <div class="ri ri-zone-top">Row 1 (Top)</div>
+        <div class="ri ri-zone-top">Row 2</div>
+        <div class="ri">Row 3</div>
+        <div class="ri ri-zone-bottom">Row 4</div>
+        <div class="ri ri-zone-bottom">Row 5 (Bottom)</div>
       </div>
       <div class="box-grid" id="player-grid"></div>
     </div>
     <div class="stats-summary" id="player-stats">
-      <div class="stat-box"><div class="label">Total HP</div><div class="value green" id="stat-hp">0</div></div>
       <div class="stat-box"><div class="label">Total ATK</div><div class="value red" id="stat-atk">0</div></div>
       <div class="stat-box"><div class="label">Items</div><div class="value yellow" id="stat-items">0</div></div>
       <div class="stat-box"><div class="label">Grid</div><div class="value" id="stat-grid" style="color:#5dade2">0/25</div></div>
     </div>
-    <div class="placed-items-list" id="placed-items-list"></div>
+    
+    <div class="prepare-team-container">
+      <h3>PREPARE YOUR TEAM <span class="subtitle">(Drag to reorder fight sequence)</span></h3>
+      <div class="placed-items-list" id="placed-items-list"></div>
+    </div>
+
     <div class="action-bar">
       <button class="btn btn-clear" onclick="clearAllItems()">Clear All</button>
       <button class="btn btn-fight" id="btn-fight" onclick="startBattle()">FIGHT!</button>
@@ -117,9 +121,7 @@
   </div>
 
   <div class="stats-summary" style="margin-top:12px">
-    <div class="stat-box"><div class="label">Your HP</div><div class="value green" id="battle-hp-player">0</div></div>
     <div class="stat-box"><div class="label">Your ATK</div><div class="value red" id="battle-atk-player">0</div></div>
-    <div class="stat-box"><div class="label">Rival HP</div><div class="value green" id="battle-hp-enemy">0</div></div>
     <div class="stat-box"><div class="label">Rival ATK</div><div class="value red" id="battle-atk-enemy">0</div></div>
   </div>
   <!-- Side-by-side box views -->
@@ -168,5 +170,8 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script type="module" src="js/main.js"></script>
+
+  <!-- POP OVER TOOLTIP -->
+  <div id="item-popover" class="item-popover"></div>
 </body>
 </html>

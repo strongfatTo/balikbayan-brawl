@@ -635,6 +635,30 @@ function renderShop() {
     if (item.price > budget) card.classList.add('disabled');
     if (selectedItem && selectedItem.id === item.id) card.classList.add('selected');
 
+    // Add info button to shop card
+    const shopInfoBtn = document.createElement('div');
+    shopInfoBtn.className = 'info-btn';
+    shopInfoBtn.style.opacity = '1';
+    shopInfoBtn.style.position = 'absolute';
+    shopInfoBtn.style.top = '4px';
+    shopInfoBtn.style.right = '4px';
+    shopInfoBtn.textContent = 'i';
+    card.appendChild(shopInfoBtn);
+
+    shopInfoBtn.addEventListener('mouseenter', (e) => {
+      e.stopPropagation();
+      const popover = document.getElementById('item-popover');
+      popover.innerHTML = `<div class="popover-desc">${item.desc || 'No special effects.'}</div>`;
+      const rect = shopInfoBtn.getBoundingClientRect();
+      popover.style.left = (rect.right + 10) + 'px';
+      popover.style.top = (rect.top - 10) + 'px';
+      popover.classList.add('show');
+    });
+
+    shopInfoBtn.addEventListener('mouseleave', () => {
+      document.getElementById('item-popover').classList.remove('show');
+    });
+
     const shape = selectedItem && selectedItem.id === item.id
       ? item.shapes[selectedShapeIdx]
       : item.shapes[0];
@@ -645,7 +669,9 @@ function renderShop() {
     preview.className = 'item-shape-preview';
     preview.style.gridTemplateColumns = `repeat(${previewSize}, 1fr)`;
     preview.style.gridTemplateRows = `repeat(${previewSize}, 1fr)`;
-    for (let py = 0; py < previewSize; py++) {
+    
+    // Fix: Draw preview from top row to bottom row to match grid coordinates (y=max at top)
+    for (let py = previewSize - 1; py >= 0; py--) {
       for (let px = 0; px < previewSize; px++) {
         const c = document.createElement('div');
         c.className = 'cell';
@@ -664,12 +690,10 @@ function renderShop() {
     info.innerHTML = `
       <div class="name">${item.emoji} ${item.name}</div>
       <div class="stats">
-        <span style="color:#4ecca3">HP:${item.hp}</span>
-        <span style="color:#e94560">ATK:${item.atk}</span>
-        <span>${shape.length} cells</span>
+        <span class="atk-badge">ATK: ${item.atk}</span>
       </div>
-      ${item.desc ? `<div class="bonus">${item.desc}</div>` : ''}
     `;
+    card.title = item.desc || ''; // Use native hover tooltip for special effect
     card.appendChild(info);
 
     const price = document.createElement('div');
@@ -798,7 +822,14 @@ function renderGrid() {
       if (occupant) {
         cell.classList.add('occupied', occupant.item.colorClass);
         cell.title = `${occupant.item.emoji} ${occupant.item.name}`;
-        cell.textContent = occupant.item.emoji;
+        
+        // Find order index
+        const orderIdx = placedItems.findIndex(p => p.placedId === occupant.placedId) + 1;
+        cell.innerHTML = `
+          <div class="grid-cell-emoji">${occupant.item.emoji}</div>
+          <div class="grid-cell-badge">${orderIdx}</div>
+        `;
+
         // Check if this item has active mechanic
         const m = checkMechanic(occupant, placedItems, playerGrid);
         if (m.active && m.text && m.text !== occupant.item.mechanic?.badLabel) {
@@ -813,63 +844,95 @@ function renderGrid() {
 function renderPlacedItemsList() {
   const listEl = document.getElementById('placed-items-list');
   listEl.innerHTML = '';
-  placedItems.forEach(pi => {
+  
+  // placedItems is now the source of truth for order.
+  // We only auto-sort it when a new item is added if we want, 
+  // but the user wants manual control. 
+  // Let's NOT auto-sort here to preserve user's manual drag order.
+
+  placedItems.forEach((pi, idx) => {
     const m = checkMechanic(pi, placedItems, playerGrid);
     const bonusText = m.text;
-    const tag = document.createElement('span');
+    const tag = document.createElement('div');
     tag.className = 'placed-item-tag';
-    if (bonusText) tag.classList.add('has-bonus');
-    const es = getEffectiveStats(pi, placedItems, playerGrid);
-    const shieldStr = es.shield > 0 ? ` <span style="color:#5dade2;font-size:12px">🛡${es.shield}</span>` : '';
-    tag.innerHTML = `${pi.item.emoji} ${pi.item.name} <span style="color:#4ecca3;font-size:12px">HP:${es.hp}</span> <span style="color:#e94560;font-size:12px">ATK:${es.atk}</span>${shieldStr} ${bonusText ? `<span style="color:#f0c040;font-size:12px">${bonusText}</span>` : ''} <span class="x">x</span>`;
-    tag.addEventListener('click', () => removeItem(pi.placedId));
+    tag.draggable = true;
+    tag.dataset.id = pi.placedId;
+    
+    // Only add class if the effect is active and meaningful
+    if (m.active && bonusText && bonusText !== pi.item.mechanic?.badLabel) {
+      tag.classList.add('has-bonus');
+    }
+    
+    if (bonusText) {
+      tag.title = bonusText; // Show effect detail on hover
+    }
+    
+    tag.innerHTML = `
+      <span class="order-badge">${idx + 1}</span>
+      <span class="item-emoji">${pi.item.emoji}</span>
+      <div class="info-btn">i</div>
+      <span class="x" title="Remove">✕</span>
+    `;
+
+    // Popover Logic
+    const infoBtn = tag.querySelector('.info-btn');
+    infoBtn.addEventListener('mouseenter', (e) => {
+      const popover = document.getElementById('item-popover');
+      popover.innerHTML = `<div class="popover-desc">${bonusText || 'No active bonus.'}</div>`;
+      
+      const rect = infoBtn.getBoundingClientRect();
+      popover.style.left = (rect.left - 210) + 'px';
+      popover.style.top = (rect.top - 40) + 'px';
+      popover.classList.add('show');
+    });
+
+    infoBtn.addEventListener('mouseleave', () => {
+      document.getElementById('item-popover').classList.remove('show');
+    });
+
+    // Remove item logic
+    tag.querySelector('.x').onclick = (e) => {
+      e.stopPropagation();
+      document.getElementById('item-popover').classList.remove('show');
+      removeItem(pi.placedId);
+    };
+
+    // Drag and Drop listeners
+    tag.addEventListener('dragstart', (e) => {
+      tag.classList.add('dragging');
+      e.dataTransfer.setData('text/plain', pi.placedId);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    tag.addEventListener('dragend', () => {
+      tag.classList.remove('dragging');
+    });
+
+    tag.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const draggingEl = document.querySelector('.dragging');
+      if (draggingEl && draggingEl !== tag) {
+        const rect = tag.getBoundingClientRect();
+        const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
+        listEl.insertBefore(draggingEl, next ? tag.nextSibling : tag);
+      }
+    });
+
+    tag.addEventListener('drop', (e) => {
+      e.preventDefault();
+      // Re-sync placedItems array based on DOM order
+      const newOrderIds = Array.from(listEl.querySelectorAll('.placed-item-tag'))
+        .map(el => parseInt(el.dataset.id));
+      
+      const newPlacedItems = newOrderIds.map(id => placedItems.find(p => p.placedId === id));
+      placedItems = newPlacedItems;
+      renderPlacedItemsList();
+      renderGrid(); // Refresh badges on grid
+    });
+
     listEl.appendChild(tag);
   });
-}
-
-// ── Hover preview ──
-function clearHoverPreview() {
-  for (let gy = 0; gy < GRID_H; gy++)
-    for (let gx = 0; gx < GRID_W; gx++)
-      gridCells[gy][gx].classList.remove('preview-valid', 'preview-invalid');
-  hoverCells = [];
-}
-
-function updateHoverPreview(gx, gy) {
-  clearHoverPreview();
-  if (!selectedItem) return;
-  const shape = selectedItem.shapes[selectedShapeIdx];
-  hoverCells = shape.map(([dx, dy]) => ({ x: gx + dx, y: gy + dy }));
-  const allValid = hoverCells.every(h =>
-    h.x >= 0 && h.x < GRID_W && h.y >= 0 && h.y < GRID_H && !playerGrid[h.y][h.x]
-  );
-  const cls = allValid ? 'preview-valid' : 'preview-invalid';
-  hoverCells.forEach(h => {
-    if (h.x >= 0 && h.x < GRID_W && h.y >= 0 && h.y < GRID_H && !playerGrid[h.y][h.x])
-      gridCells[h.y][h.x].classList.add(cls);
-  });
-}
-
-function onCellClick(gx, gy) {
-  if (!selectedItem) return;
-  const shape = selectedItem.shapes[selectedShapeIdx];
-  const cells = shape.map(([dx, dy]) => ({ x: gx + dx, y: gy + dy }));
-  const valid = cells.every(c =>
-    c.x >= 0 && c.x < GRID_W && c.y >= 0 && c.y < GRID_H && !playerGrid[c.y][c.x]
-  );
-  if (!valid || selectedItem.price > budget) return;
-  const placedId = ++placedIdCounter;
-  const placed = { item: selectedItem, cells, shapeIdx: selectedShapeIdx, placedId };
-  placedItems.push(placed);
-  cells.forEach(c => { playerGrid[c.y][c.x] = placed; });
-  budget -= selectedItem.price;
-  selectedItem = null;
-  selectedShapeIdx = 0;
-  clearHoverPreview();
-  renderShop();
-  renderGrid();
-  renderRules();
-  updateStats();
 }
 
 function removeItem(placedId) {
@@ -944,10 +1007,58 @@ window.restartGame = function() {
   init();
 };
 
+// ── Placement Logic ──
+function clearHoverPreview() {
+  for (let gy = 0; gy < GRID_H; gy++)
+    for (let gx = 0; gx < GRID_W; gx++)
+      gridCells[gy][gx].classList.remove('preview-valid', 'preview-invalid');
+  hoverCells = [];
+}
+
+function updateHoverPreview(gx, gy) {
+  clearHoverPreview();
+  if (!selectedItem) return;
+  const shape = selectedItem.shapes[selectedShapeIdx];
+  hoverCells = shape.map(([dx, dy]) => ({ x: gx + dx, y: gy + dy }));
+  const allValid = hoverCells.every(h =>
+    h.x >= 0 && h.x < GRID_W && h.y >= 0 && h.y < GRID_H && !playerGrid[h.y][h.x]
+  );
+  const cls = allValid ? 'preview-valid' : 'preview-invalid';
+  hoverCells.forEach(h => {
+    if (h.x >= 0 && h.x < GRID_W && h.y >= 0 && h.y < GRID_H && !playerGrid[h.y][h.x])
+      gridCells[h.y][h.x].classList.add(cls);
+  });
+}
+
+function onCellClick(gx, gy) {
+  if (!selectedItem) return;
+  const shape = selectedItem.shapes[selectedShapeIdx];
+  const cells = shape.map(([dx, dy]) => ({ x: gx + dx, y: gy + dy }));
+  const valid = cells.every(c =>
+    c.x >= 0 && c.x < GRID_W && c.y >= 0 && c.y < GRID_H && !playerGrid[c.y][c.x]
+  );
+  if (!valid || selectedItem.price > budget) return;
+  const placedId = ++placedIdCounter;
+  const placed = { item: selectedItem, cells, shapeIdx: selectedShapeIdx, placedId };
+  placedItems.push(placed);
+  cells.forEach(c => { playerGrid[c.y][c.x] = placed; });
+  budget -= selectedItem.price;
+  selectedItem = null;
+  selectedShapeIdx = 0;
+  clearHoverPreview();
+  renderShop();
+  renderGrid();
+  renderRules();
+  updateStats();
+  // Ensure hover preview is updated for the now-empty selection
+  if (lastHoverGx >= 0 && lastHoverGy >= 0) updateHoverPreview(lastHoverGx, lastHoverGy);
+}
+
 // ── Rotation ──
 document.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') {
     if (!selectedItem) return;
+    e.preventDefault(); // Prevent accidental scroll or other browser defaults
     selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
     renderShop();
     if (lastHoverGx >= 0 && lastHoverGy >= 0)
@@ -959,15 +1070,12 @@ document.addEventListener('keydown', (e) => {
 //  STATS
 // ═══════════════════════════════════════════════════════
 function updateStats() {
-  let totalHp = 0, totalAtk = 0, totalShield = 0, cellsUsed = 0;
+  let totalAtk = 0, cellsUsed = 0;
   placedItems.forEach(pi => {
     const s = getEffectiveStats(pi, placedItems, playerGrid);
-    totalHp += s.hp;
     totalAtk += s.atk;
-    totalShield += s.shield || 0;
     cellsUsed += pi.cells.length;
   });
-  document.getElementById('stat-hp').textContent = totalHp + (totalShield > 0 ? `+${totalShield}🛡` : '');
   document.getElementById('stat-atk').textContent = totalAtk;
   document.getElementById('stat-items').textContent = placedItems.length;
   document.getElementById('stat-grid').textContent = `${cellsUsed}/25`;
