@@ -8,14 +8,22 @@
 </head>
 <body>
 
+<!-- A1 INTRO VIDEO OVERLAY — plays once on page load, then fades out -->
+<div id="intro-overlay">
+  <video id="intro-video" autoplay muted playsinline>
+    <source src="assets/videos/A1 .mp4" type="video/mp4">
+  </video>
+  <button id="skip-intro-btn" onclick="skipIntro()">Skip</button>
+</div>
+
 <!-- HEADER -->
-<div class="header">
+<div id="main-header" class="header" style="display:none;">
   <h1>BALIKBAYAN BRAWL</h1>
   <p>Pack your box. Fight your rival. Send love home.</p>
 </div>
 
 <!-- LOGIN PHASE -->
-<div id="login-phase" class="phase-container">
+<div id="login-phase" class="phase-container" style="display:none;">
   <div class="login-card">
     <h2>Welcome</h2>
     <input type="text" id="player-name-input" placeholder="Enter your name..." maxlength="12">
@@ -62,15 +70,24 @@
     <div class="grid-label">
       Click item in shop, then click grid to place. Press <kbd>R</kbd> to rotate shape.
     </div>
-    <div class="grid-container">
-      <div class="row-indicators">
-        <div class="ri ri-zone-top">Row 1 (Top)</div>
-        <div class="ri ri-zone-top">Row 2</div>
-        <div class="ri">Row 3</div>
-        <div class="ri ri-zone-bottom">Row 4</div>
-        <div class="ri ri-zone-bottom">Row 5 (Bottom)</div>
+    <div class="grid-bg-wrapper">
+      <!-- A2 video plays behind the grid when entering the game -->
+      <video id="grid-bg-video" muted playsinline preload="auto">
+        <source src="assets/videos/A2 .mp4" type="video/mp4">
+      </video>
+      <!-- P1 static image — last frame of A2, shown after A2 ends -->
+      <img id="grid-bg-image" src="assets/images/P1 .PNG" alt="Box background" style="display:none;">
+
+      <div class="grid-container">
+        <div class="row-indicators">
+          <div class="ri ri-zone-top">Row 1 (Top)</div>
+          <div class="ri ri-zone-top">Row 2</div>
+          <div class="ri">Row 3</div>
+          <div class="ri ri-zone-bottom">Row 4</div>
+          <div class="ri ri-zone-bottom">Row 5 (Bottom)</div>
+        </div>
+        <div class="box-grid" id="player-grid"></div>
       </div>
-      <div class="box-grid" id="player-grid"></div>
     </div>
     <div class="stats-summary" id="player-stats">
       <div class="stat-box"><div class="label">Total ATK</div><div class="value red" id="stat-atk">0</div></div>

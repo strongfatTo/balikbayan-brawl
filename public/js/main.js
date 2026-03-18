@@ -28,6 +28,8 @@ let presenceState = {};
 let myPresenceId = null;
 let lobbyTimer = null;
 let isAdvancingRound = false;
+let introFinished = false;
+let a2HasPlayed = false;
 
 const SUPABASE_URL = 'https://svjwcroknmzdkkjxclww.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2andjcm9rbm16ZGtranhjbHd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2NTI4ODgsImV4cCI6MjA4ODIyODg4OH0.P6E46tZ2oGUCHu7lE7BuzCbbNyuTOnIiRtMIM50L_OY';
@@ -52,13 +54,22 @@ function init() {
   isAdvancingRound = false;
   if (lobbyTimer) { clearTimeout(lobbyTimer); lobbyTimer = null; }
   
-  // UI Reset
-  document.getElementById('login-phase').style.display = 'flex';
+  // UI Reset — hide login/header until intro finishes
+  if (introFinished) {
+    document.getElementById('main-header').style.display = '';
+    document.getElementById('login-phase').style.display = 'flex';
+  } else {
+    document.getElementById('main-header').style.display = 'none';
+    document.getElementById('login-phase').style.display = 'none';
+  }
   document.getElementById('lobby-phase').style.display = 'none';
   document.getElementById('shop-phase').style.display = 'none';
   document.getElementById('battle-phase').style.display = 'none';
   document.getElementById('leaderboard-overlay').classList.remove('show');
   document.getElementById('result-overlay').classList.remove('show');
+
+  // Reset grid background state
+  resetGridBackground();
 
   if (!gridBuilt) { buildGrid(); gridBuilt = true; }
   renderShop();
@@ -69,6 +80,167 @@ function init() {
   if (!supabase) {
     supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   }
+}
+
+// ═══════════════════════════════════════════════════════
+//  SCENE FLOW — A1 Intro, A2 Grid BG, P1 Static BG
+// ═══════════════════════════════════════════════════════
+
+/** End the A1 intro overlay and reveal the main UI */
+function finishIntro() {
+  if (introFinished) return;
+  introFinished = true;
+
+  const overlay = document.getElementById('intro-overlay');
+  const introVideo = document.getElementById('intro-video');
+
+  overlay.classList.add('hidden');
+  introVideo.pause();
+
+  // After the fade transition, remove it from layout entirely
+  setTimeout(() => {
+    overlay.classList.add('removed');
+  }, 650);
+
+  // Show the main header and login
+  document.getElementById('main-header').style.display = '';
+  document.getElementById('login-phase').style.display = 'flex';
+}
+
+/** Skip button handler */
+window.skipIntro = function() {
+  finishIntro();
+};
+
+/** Preload the A2 video blob at startup so it's ready when entering the game */
+let a2VideoBlob = null;
+function preloadA2Video() {
+  fetch('assets/videos/A2 .mp4')
+    .then(r => r.blob())
+    .then(blob => {
+      a2VideoBlob = URL.createObjectURL(blob);
+      console.log('[DEBUG] A2 video preloaded:', a2VideoBlob);
+    })
+    .catch(err => console.error('[DEBUG] A2 preload failed:', err));
+}
+
+/** Play A2 video behind the grid; when it ends, switch to P1 static image and fade in UI */
+function playGridOpeningVideo() {
+  const video = document.getElementById('grid-bg-video');
+  const img = document.getElementById('grid-bg-image');
+  const shopPhase = document.getElementById('shop-phase');
+  const header = document.getElementById('main-header');
+  const gridWrapper = document.querySelector('.grid-bg-wrapper');
+  if (!video || !img) { console.error('video or img not found'); return; }
+
+  shopPhase.classList.add('a2-playing');
+  header.classList.add('header-hidden');
+  if (gridWrapper) gridWrapper.classList.remove('grid-visible');
+
+  // Use the preloaded blob URL if available, otherwise fall back to original src
+  if (a2VideoBlob) {
+    video.src = a2VideoBlob;
+  } else {
+    video.load();
+  }
+  video.style.display = '';
+  img.style.display = 'none';
+  video.currentTime = 0;
+
+  let playStarted = false;
+  const attemptPlay = () => {
+    if (playStarted) return;
+    playStarted = true;
+    a2HasPlayed = true;
+    video.play().then(() => {
+      console.log('[DEBUG] video playing! duration:', video.duration);
+      setTimeout(() => {
+        console.log('[DEBUG] setTimeout: adding grid-visible');
+        if (gridWrapper) gridWrapper.classList.add('grid-visible');
+        console.log('[DEBUG] grid-wrapper classes:', gridWrapper ? gridWrapper.className : 'n/a');
+      }, 2000);
+      const videoDuration = (video.duration && isFinite(video.duration) && video.duration > 0)
+        ? video.duration * 1000
+        : 2000;
+      console.log('[DEBUG] setting end timer for', videoDuration, 'ms');
+      setTimeout(() => {
+        console.log('[DEBUG] end timer: calling showP1Background and revealShopUI');
+        showP1Background();
+        revealShopUI();
+        console.log('[DEBUG] end timer done');
+      }, videoDuration);
+    }).catch((err) => {
+      console.error('[DEBUG] video play() rejected:', err);
+      showP1Background();
+      revealShopUI();
+      if (gridWrapper) gridWrapper.classList.add('grid-visible');
+    });
+  };
+
+  if (video.readyState >= 3) {
+    attemptPlay();
+  } else {
+    video.oncanplay = () => {
+      video.oncanplay = null;
+      attemptPlay();
+    };
+  }
+
+  video.onerror = () => {
+    console.error('[DEBUG] video onerror:', video.error);
+    showP1Background();
+    revealShopUI();
+    if (gridWrapper) gridWrapper.classList.add('grid-visible');
+  };
+}
+
+/** Show P1 static background and hide A2 video */
+function showP1Background() {
+  const video = document.getElementById('grid-bg-video');
+  const img = document.getElementById('grid-bg-image');
+  if (!video || !img) return;
+
+  console.log('[DEBUG] showP1Background: hiding video, showing img');
+  video.style.display = 'none';
+  img.style.display = '';
+}
+
+/** Fade in all surrounding UI after the box is shown */
+function revealShopUI() {
+  const shopPhase = document.getElementById('shop-phase');
+  const header = document.getElementById('main-header');
+  console.log('[DEBUG] revealShopUI: removing a2-playing class, shopPhase:', shopPhase, 'header:', header);
+  shopPhase.classList.remove('a2-playing');
+  header.classList.remove('header-hidden');
+  console.log('[DEBUG] revealShopUI done, classes:', {
+    shopPhase: shopPhase.className,
+    header: header ? header.className : 'n/a'
+  });
+}
+
+/** Reset grid background (hide both A2 and P1) */
+function resetGridBackground() {
+  a2HasPlayed = false;
+  const video = document.getElementById('grid-bg-video');
+  const img = document.getElementById('grid-bg-image');
+  if (video) { video.pause(); video.currentTime = 0; video.style.display = 'none'; }
+  if (img) { img.style.display = 'none'; }
+}
+
+/** Set up the A1 intro video listeners (called once at boot) */
+function setupIntroVideo() {
+  const introVideo = document.getElementById('intro-video');
+  if (!introVideo) { introFinished = true; return; }
+
+  // When A1 finishes naturally, reveal the main UI
+  introVideo.addEventListener('ended', () => {
+    finishIntro();
+  });
+
+  // Fallback: if video fails to load, skip intro
+  introVideo.addEventListener('error', () => {
+    finishIntro();
+  });
 }
 
 function showOverlay(title, subtitle) {
@@ -439,6 +611,20 @@ function switchPhase(phase) {
   document.getElementById('lobby-phase').style.display = phase === 'lobby' ? 'flex' : 'none';
   document.getElementById('shop-phase').style.display = phase === 'shopping' ? 'grid' : 'none';
   document.getElementById('battle-phase').style.display = phase === 'battle' ? 'block' : 'none';
+
+  // Scene flow: when entering the shop phase, play A2 behind the grid
+  if (phase === 'shopping') {
+    const gridWrapper = document.querySelector('.grid-bg-wrapper');
+    if (!a2HasPlayed) {
+      playGridOpeningVideo();
+    } else {
+      // Already played A2 before (e.g. round 2+), show P1 directly and UI immediately
+      showP1Background();
+      if (gridWrapper) gridWrapper.classList.add('grid-visible');
+      document.getElementById('shop-phase').classList.remove('a2-playing');
+      document.getElementById('main-header').classList.remove('header-hidden');
+    }
+  }
 }
 
 function updateLobbyUI(players) {
@@ -688,7 +874,10 @@ function renderShop() {
     const info = document.createElement('div');
     info.className = 'item-info';
     info.innerHTML = `
-      <div class="name">${item.emoji} ${item.name}</div>
+      <div class="name">
+        ${item.image ? `<img src="${item.image}" alt="${item.name}" style="height:24px; width:24px; object-fit:contain; vertical-align:middle; margin-right:5px;">` : item.emoji} 
+        ${item.name}
+      </div>
       <div class="stats">
         <span class="atk-badge">ATK: ${item.atk}</span>
       </div>
@@ -755,9 +944,14 @@ function renderRules() {
       
       const row = document.createElement('div');
       row.className = 'rule-row';
+      const item = ITEMS.find(i => i.id === rule.itemId);
+      const iconHtml = item && item.image 
+        ? `<img src="${item.image}" alt="${rule.name}" style="height:24px; width:24px; object-fit:contain; vertical-align:middle; margin-right:5px;">` 
+        : `<span style="font-size:20px">${rule.emoji}</span>`;
+
       row.innerHTML = `
         <div class="rule-indicator ${isActive && placed ? 'active' : ''}" style="border-color: ${currentColor}"></div>
-        <span style="font-size:20px">${rule.emoji}</span>
+        ${iconHtml}
         <span class="rule-text ${isActive && placed ? 'active' : ''}">${rule.name}: ${rule.desc} &rarr; <strong style="color:${currentColor}">${currentEffect}</strong>
         ${placed ? (isActive ? ' <span style="color:#4ecca3">✓</span>' : '') : ''}
         </span>
@@ -826,7 +1020,9 @@ function renderGrid() {
         // Find order index
         const orderIdx = placedItems.findIndex(p => p.placedId === occupant.placedId) + 1;
         cell.innerHTML = `
-          <div class="grid-cell-emoji">${occupant.item.emoji}</div>
+          <div class="grid-cell-emoji">
+            ${occupant.item.image ? `<img src="${occupant.item.image}" alt="${occupant.item.name}">` : occupant.item.emoji}
+          </div>
           <div class="grid-cell-badge">${orderIdx}</div>
         `;
 
@@ -844,11 +1040,6 @@ function renderGrid() {
 function renderPlacedItemsList() {
   const listEl = document.getElementById('placed-items-list');
   listEl.innerHTML = '';
-  
-  // placedItems is now the source of truth for order.
-  // We only auto-sort it when a new item is added if we want, 
-  // but the user wants manual control. 
-  // Let's NOT auto-sort here to preserve user's manual drag order.
 
   placedItems.forEach((pi, idx) => {
     const m = checkMechanic(pi, placedItems, playerGrid);
@@ -857,82 +1048,95 @@ function renderPlacedItemsList() {
     tag.className = 'placed-item-tag';
     tag.draggable = true;
     tag.dataset.id = pi.placedId;
-    
-    // Only add class if the effect is active and meaningful
+    tag.dataset.idx = idx;
+
     if (m.active && bonusText && bonusText !== pi.item.mechanic?.badLabel) {
       tag.classList.add('has-bonus');
     }
-    
+
     if (bonusText) {
-      tag.title = bonusText; // Show effect detail on hover
+      tag.title = bonusText;
     }
-    
+
     tag.innerHTML = `
       <span class="order-badge">${idx + 1}</span>
-      <span class="item-emoji">${pi.item.emoji}</span>
+      <span class="item-emoji">
+        ${pi.item.image ? `<img src="${pi.item.image}" alt="${pi.item.name}" style="height:24px; width:24px; object-fit:contain;">` : pi.item.emoji}
+      </span>
       <div class="info-btn">i</div>
       <span class="x" title="Remove">✕</span>
     `;
 
-    // Popover Logic
-    const infoBtn = tag.querySelector('.info-btn');
-    infoBtn.addEventListener('mouseenter', (e) => {
-      const popover = document.getElementById('item-popover');
-      popover.innerHTML = `<div class="popover-desc">${bonusText || 'No active bonus.'}</div>`;
-      
-      const rect = infoBtn.getBoundingClientRect();
-      popover.style.left = (rect.left - 210) + 'px';
-      popover.style.top = (rect.top - 40) + 'px';
-      popover.classList.add('show');
-    });
-
-    infoBtn.addEventListener('mouseleave', () => {
-      document.getElementById('item-popover').classList.remove('show');
-    });
-
-    // Remove item logic
-    tag.querySelector('.x').onclick = (e) => {
-      e.stopPropagation();
-      document.getElementById('item-popover').classList.remove('show');
-      removeItem(pi.placedId);
-    };
-
-    // Drag and Drop listeners
-    tag.addEventListener('dragstart', (e) => {
-      tag.classList.add('dragging');
-      e.dataTransfer.setData('text/plain', pi.placedId);
-      e.dataTransfer.effectAllowed = 'move';
-    });
-
-    tag.addEventListener('dragend', () => {
-      tag.classList.remove('dragging');
-    });
-
-    tag.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      const draggingEl = document.querySelector('.dragging');
-      if (draggingEl && draggingEl !== tag) {
-        const rect = tag.getBoundingClientRect();
-        const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
-        listEl.insertBefore(draggingEl, next ? tag.nextSibling : tag);
-      }
-    });
-
-    tag.addEventListener('drop', (e) => {
-      e.preventDefault();
-      // Re-sync placedItems array based on DOM order
-      const newOrderIds = Array.from(listEl.querySelectorAll('.placed-item-tag'))
-        .map(el => parseInt(el.dataset.id));
-      
-      const newPlacedItems = newOrderIds.map(id => placedItems.find(p => p.placedId === id));
-      placedItems = newPlacedItems;
-      renderPlacedItemsList();
-      renderGrid(); // Refresh badges on grid
-    });
-
     listEl.appendChild(tag);
   });
+
+  // Attach drag-drop listeners ONCE to the container (event delegation)
+  // This avoids innerHTML replacing child-element listeners
+  listEl.ondragover = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const draggingEl = listEl.querySelector('.dragging');
+    const target = e.target.closest('.placed-item-tag');
+    if (!draggingEl || !target || draggingEl === target) return;
+    const rect = target.getBoundingClientRect();
+    const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
+    listEl.insertBefore(draggingEl, next ? target.nextSibling : target);
+  };
+
+  listEl.ondrop = (e) => {
+    e.preventDefault();
+    const newOrderIds = Array.from(listEl.querySelectorAll('.placed-item-tag'))
+      .map(el => parseInt(el.dataset.id));
+    placedItems = newOrderIds.map(id => placedItems.find(p => p.placedId === id));
+    renderPlacedItemsList();
+    renderGrid();
+  };
+
+  listEl.ondragstart = (e) => {
+    const tag = e.target.closest('.placed-item-tag');
+    if (!tag) return;
+    tag.classList.add('dragging');
+    e.dataTransfer.setData('text/plain', tag.dataset.id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  listEl.ondragend = (e) => {
+    const tag = e.target.closest('.placed-item-tag');
+    if (tag) tag.classList.remove('dragging');
+  };
+
+  // Info button popover (delegated)
+  listEl.onmouseover = (e) => {
+    const infoBtn = e.target.closest('.info-btn');
+    if (!infoBtn) return;
+    const tag = infoBtn.closest('.placed-item-tag');
+    if (!tag) return;
+    const pi = placedItems.find(p => p.placedId === parseInt(tag.dataset.id));
+    if (!pi) return;
+    const m = checkMechanic(pi, placedItems, playerGrid);
+    const bonusText = m.text;
+    const popover = document.getElementById('item-popover');
+    popover.innerHTML = `<div class="popover-desc">${bonusText || 'No active bonus.'}</div>`;
+    const rect = infoBtn.getBoundingClientRect();
+    popover.style.left = (rect.left - 210) + 'px';
+    popover.style.top = (rect.top - 40) + 'px';
+    popover.classList.add('show');
+  };
+
+  listEl.onmouseout = (e) => {
+    const infoBtn = e.target.closest('.info-btn');
+    if (infoBtn) document.getElementById('item-popover').classList.remove('show');
+  };
+
+  // Remove button
+  listEl.onclick = (e) => {
+    const xBtn = e.target.closest('.x');
+    if (!xBtn) return;
+    const tag = xBtn.closest('.placed-item-tag');
+    if (!tag) return;
+    document.getElementById('item-popover').classList.remove('show');
+    removeItem(parseInt(tag.dataset.id));
+  };
 }
 
 function removeItem(placedId) {
@@ -1084,4 +1288,6 @@ function updateStats() {
 // ═══════════════════════════════════════════════════════
 //  BOOT
 // ═══════════════════════════════════════════════════════
+setupIntroVideo();
 init();
+preloadA2Video();
