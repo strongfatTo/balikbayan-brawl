@@ -294,9 +294,9 @@ body {
 /* ── Phase: SHOP (3 columns) ── */
 #shop-phase {
   display: none; /* Changed from grid to handle display via JS */
-  grid-template-columns: 340px 1fr 280px;
-  gap: 24px;
-  padding: 24px 32px;
+  grid-template-columns: clamp(260px, 30vw, 340px) 1fr clamp(220px, 25vw, 280px);
+  gap: clamp(12px, 2vmin, 24px);
+  padding: clamp(12px, 2vmin, 24px) clamp(16px, 3vmin, 32px);
   max-width: 1600px;
   margin: 0 auto;
   align-items: start;
@@ -304,7 +304,7 @@ body {
 
 /* ── Shop Panel ── */
 .shop-panel {
-  width: 340px;
+  width: clamp(260px, 30vw, 340px);
   flex-shrink: 0;
 }
 .shop-header-actions {
@@ -331,15 +331,15 @@ body {
   background: #16213e;
   border: 2px solid #0f3460;
   border-radius: 10px;
-  padding: 16px 22px;
+  padding: clamp(10px, 1.5vmin, 16px) clamp(14px, 2vmin, 22px);
   margin-bottom: 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 22px;
+  font-size: clamp(16px, 2.5vmin, 22px);
   font-weight: bold;
 }
-.budget-bar .money { color: #4ecca3; font-size: 32px; }
+.budget-bar .money { color: #4ecca3; font-size: clamp(24px, 3.5vmin, 32px); }
 
 .item-card {
   background: #16213e;
@@ -358,48 +358,48 @@ body {
 .item-card.disabled { opacity: 0.35; pointer-events: none; }
 
 .item-shape-preview {
-  width: 80px;
-  height: 80px;
+  width: clamp(50px, 8vmin, 80px);
+  height: clamp(50px, 8vmin, 80px);
   display: grid;
-  gap: 2px;
   flex-shrink: 0;
 }
 .item-shape-preview .cell { border-radius: 3px; }
 
 .item-info { flex: 1; min-width: 0; }
-.item-info .name { font-weight: bold; font-size: 16px; margin-bottom: 4px; }
+.item-info .name { font-weight: bold; font-size: clamp(14px, 1.5vmin, 16px); margin-bottom: 4px; }
 .item-info .stats { display: flex; align-items: center; }
 .atk-badge {
   background: #e94560;
   color: #fff;
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: clamp(10px, 1.2vmin, 12px);
   font-weight: bold;
   letter-spacing: 0.5px;
 }
-.item-price { font-size: 24px; font-weight: bold; color: #4ecca3; flex-shrink: 0; }
+.item-price { font-size: clamp(16px, 2.5vmin, 24px); font-weight: bold; color: #4ecca3; flex-shrink: 0; }
 
 /* ── Rules Panel ── */
 .rules-panel {
   background: #16213e;
   border: 2px solid #0f3460;
   border-radius: 10px;
-  padding: 14px 18px;
+  padding: clamp(10px, 1.5vmin, 14px) clamp(12px, 2vmin, 18px);
   margin-top: 14px;
 }
-.rules-panel h4 { color: #f0c040; font-size: 15px; margin-bottom: 10px; }
+.rules-panel h4 { color: #f0c040; font-size: clamp(13px, 1.5vmin, 15px); margin-bottom: 10px; }
 .rule-row {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 6px 0;
-  font-size: 14px;
+  font-size: clamp(12px, 1.25vmin, 14px);
   border-bottom: 1px solid #0a0a1a;
 }
 .rule-row:last-child { border-bottom: none; }
 .rule-indicator {
-  width: 14px; height: 14px;
+  width: clamp(10px, 1.25vmin, 14px);
+  height: clamp(10px, 1.25vmin, 14px);
   border-radius: 50%;
   flex-shrink: 0;
   border: 2px solid #333;
@@ -462,18 +462,19 @@ body {
   background: rgba(22, 33, 62, 0.4);
   border: 2px solid #0f3460;
   border-radius: 12px;
-  padding: 8px;
+  padding: clamp(4px, 0.75vmin, 8px);
   cursor: grab;
   transition: all 0.2s;
   user-select: none;
+  touch-action: none; /* Prevent default scrolling on touch devices during drag */
   position: relative;
-  width: 70px;
-  height: 70px;
+  width: clamp(40px, 6.5vmin, 70px);
+  height: clamp(40px, 6.5vmin, 70px);
   gap: 0;
 }
 
 .placed-item-tag:hover { border-color: #e94560; transform: translateY(-4px); background: rgba(22, 33, 62, 0.8); }
-.placed-item-tag.dragging { opacity: 0.5; background: #0f3460; }
+.placed-item-tag.dragging { opacity: 0.5; background: #0f3460; pointer-events: none; }
 .placed-item-tag:active { cursor: grabbing; }
 
 .placed-item-tag .order-badge {
@@ -495,8 +496,11 @@ body {
 }
 
 .placed-item-tag .item-emoji {
-  font-size: 50px;
+  font-size: clamp(28px, 4.5vmin, 50px);
   line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .placed-item-tag.has-bonus {

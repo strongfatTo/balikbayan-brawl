@@ -1037,6 +1037,95 @@ function renderGrid() {
   renderPlacedItemsList();
 }
 
+let dndState = {
+  draggingEl: null,
+  ghostEl: null,
+  placeholder: null,
+  dragOffset: { x: 0, y: 0 }
+};
+
+function handlePointerMove(e) {
+  if (!dndState.draggingEl || !dndState.ghostEl) return;
+  
+  const x = e.clientX - dndState.dragOffset.x;
+  const y = e.clientY - dndState.dragOffset.y;
+  dndState.ghostEl.style.transform = `translate(${x}px, ${y}px) scale(0.95)`;
+
+  const listEl = document.getElementById('placed-items-list');
+  // Get all valid sibling tags, ignoring the one being dragged and the placeholder
+  const siblings = Array.from(listEl.querySelectorAll('.placed-item-tag:not(.placeholder)'))
+    .filter(el => el !== dndState.draggingEl && el.style.display !== 'none');
+
+  if (siblings.length === 0) return;
+
+  let closestSibling = null;
+  let minDistance = Infinity;
+
+  // Find the closest visual sibling based on a weighted 2D distance
+  siblings.forEach(sibling => {
+    const rect = sibling.getBoundingClientRect();
+    const midX = rect.left + rect.width / 2;
+    const midY = rect.top + rect.height / 2;
+    
+    const dx = e.clientX - midX;
+    const dy = e.clientY - midY;
+    
+    // Multiply dy by a weight (e.g., 4) to prioritize snapping to the correct row first
+    const distance = dx * dx + (dy * dy * 4);
+    
+    if (distance < minDistance) {
+      minDistance = distance;
+      closestSibling = sibling;
+    }
+  });
+
+  if (closestSibling) {
+    const rect = closestSibling.getBoundingClientRect();
+    const midX = rect.left + rect.width / 2;
+    
+    // Insert before or after the closest sibling depending on the horizontal half
+    if (e.clientX > midX) {
+      if (dndState.placeholder !== closestSibling.nextSibling) {
+        listEl.insertBefore(dndState.placeholder, closestSibling.nextSibling);
+      }
+    } else {
+      if (dndState.placeholder !== closestSibling) {
+        listEl.insertBefore(dndState.placeholder, closestSibling);
+      }
+    }
+  }
+}
+
+function handlePointerUp(e) {
+  if (!dndState.draggingEl) return;
+  
+  const listEl = document.getElementById('placed-items-list');
+  
+  if (dndState.ghostEl && dndState.ghostEl.parentNode) {
+    dndState.ghostEl.parentNode.removeChild(dndState.ghostEl);
+  }
+  
+  if (dndState.placeholder && dndState.placeholder.parentNode === listEl) {
+    listEl.insertBefore(dndState.draggingEl, dndState.placeholder);
+    dndState.placeholder.parentNode.removeChild(dndState.placeholder);
+  }
+  
+  dndState.draggingEl.style.display = '';
+  dndState.draggingEl.classList.remove('dragging');
+  
+  const newOrderIds = Array.from(listEl.querySelectorAll('.placed-item-tag:not(.placeholder)'))
+    .map(el => parseInt(el.dataset.id));
+  placedItems = newOrderIds.map(id => placedItems.find(p => p.placedId === id));
+  
+  dndState = { draggingEl: null, ghostEl: null, placeholder: null, dragOffset: { x: 0, y: 0 } };
+  
+  window.removeEventListener('pointermove', handlePointerMove);
+  window.removeEventListener('pointerup', handlePointerUp);
+  
+  renderPlacedItemsList();
+  renderGrid();
+}
+
 function renderPlacedItemsList() {
   const listEl = document.getElementById('placed-items-list');
   listEl.innerHTML = '';
@@ -1046,7 +1135,6 @@ function renderPlacedItemsList() {
     const bonusText = m.text;
     const tag = document.createElement('div');
     tag.className = 'placed-item-tag';
-    tag.draggable = true;
     tag.dataset.id = pi.placedId;
     tag.dataset.idx = idx;
 
@@ -1061,49 +1149,65 @@ function renderPlacedItemsList() {
     tag.innerHTML = `
       <span class="order-badge">${idx + 1}</span>
       <span class="item-emoji">
-        ${pi.item.image ? `<img src="${pi.item.image}" alt="${pi.item.name}" style="height:24px; width:24px; object-fit:contain;">` : pi.item.emoji}
+        ${pi.item.image ? `<img src="${pi.item.image}" alt="${pi.item.name}" style="height:24px; width:24px; object-fit:contain;" draggable="false">` : pi.item.emoji}
       </span>
       <div class="info-btn">i</div>
       <span class="x" title="Remove">✕</span>
     `;
 
+    tag.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.x') || e.target.closest('.info-btn')) return;
+      
+      e.preventDefault();
+      tag.setPointerCapture(e.pointerId);
+
+      const rect = tag.getBoundingClientRect();
+      dndState.dragOffset = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+
+      dndState.draggingEl = tag;
+      tag.classList.add('dragging');
+      
+      dndState.ghostEl = tag.cloneNode(true);
+      dndState.ghostEl.style.position = 'fixed';
+      dndState.ghostEl.style.top = '0px';
+      dndState.ghostEl.style.left = '0px';
+      dndState.ghostEl.style.width = `${rect.width}px`;
+      dndState.ghostEl.style.height = `${rect.height}px`;
+      dndState.ghostEl.style.margin = '0';
+      dndState.ghostEl.style.pointerEvents = 'none';
+      dndState.ghostEl.style.zIndex = '9999';
+      dndState.ghostEl.style.opacity = '0.85';
+      dndState.ghostEl.style.boxShadow = '0 12px 24px rgba(0,0,0,0.3)';
+      dndState.ghostEl.style.transition = 'none';
+      dndState.ghostEl.style.transformOrigin = 'top left';
+      dndState.ghostEl.classList.remove('dragging');
+      
+      const initX = e.clientX - dndState.dragOffset.x;
+      const initY = e.clientY - dndState.dragOffset.y;
+      dndState.ghostEl.style.transform = `translate(${initX}px, ${initY}px) scale(0.95)`;
+      
+      document.body.appendChild(dndState.ghostEl);
+
+      dndState.placeholder = document.createElement('div');
+      dndState.placeholder.className = 'placed-item-tag placeholder';
+      dndState.placeholder.style.width = `${rect.width}px`;
+      dndState.placeholder.style.height = `${rect.height}px`;
+      dndState.placeholder.style.border = '2px dashed #aaa';
+      dndState.placeholder.style.background = 'transparent';
+      dndState.placeholder.style.opacity = '0.3';
+      
+      tag.style.display = 'none';
+      listEl.insertBefore(dndState.placeholder, tag);
+
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', handlePointerUp);
+    });
+
     listEl.appendChild(tag);
   });
-
-  // Attach drag-drop listeners ONCE to the container (event delegation)
-  // This avoids innerHTML replacing child-element listeners
-  listEl.ondragover = (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const draggingEl = listEl.querySelector('.dragging');
-    const target = e.target.closest('.placed-item-tag');
-    if (!draggingEl || !target || draggingEl === target) return;
-    const rect = target.getBoundingClientRect();
-    const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
-    listEl.insertBefore(draggingEl, next ? target.nextSibling : target);
-  };
-
-  listEl.ondrop = (e) => {
-    e.preventDefault();
-    const newOrderIds = Array.from(listEl.querySelectorAll('.placed-item-tag'))
-      .map(el => parseInt(el.dataset.id));
-    placedItems = newOrderIds.map(id => placedItems.find(p => p.placedId === id));
-    renderPlacedItemsList();
-    renderGrid();
-  };
-
-  listEl.ondragstart = (e) => {
-    const tag = e.target.closest('.placed-item-tag');
-    if (!tag) return;
-    tag.classList.add('dragging');
-    e.dataTransfer.setData('text/plain', tag.dataset.id);
-    e.dataTransfer.effectAllowed = 'move';
-  };
-
-  listEl.ondragend = (e) => {
-    const tag = e.target.closest('.placed-item-tag');
-    if (tag) tag.classList.remove('dragging');
-  };
 
   // Info button popover (delegated)
   listEl.onmouseover = (e) => {

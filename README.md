@@ -7,6 +7,7 @@
 Two players (or you vs. AI) each have **$10** and a **5x5 grid** (25 cells) to fill with items. Each item becomes a combat unit. Once packing is done, the boxes fight automatically in an animated 2D battle!
 
 ### **Key Features**
+- **Cinematic Experience**: Enjoy animated video intros and background scenes while you pack.
 - **Multiplayer Rooms**: Join a room with a friend using a Room ID.
 - **AI Mode**: Practice your packing skills against a randomly generated AI opponent.
 - **Tournament System**: Play a **5-round tournament** where you must re-pack your box each round.
@@ -15,20 +16,19 @@ Two players (or you vs. AI) each have **$10** and a **5x5 grid** (25 cells) to f
 - **Animated Battles**: Watch your items fight it out with HP bars, damage numbers, and a detailed battle log.
 
 ## 🛠️ Tech Stack
-- **Backend**: Supabase (Database & Realtime Channels)
+- **Backend**: Supabase (Database & Realtime Channels), Node.js (Express server)
 - **Frontend**: Vanilla JavaScript (ES Modules), CSS Grid, HTML5
-- **Architecture**: Serverless Multiplayer (Client-side coordination)
+- **Media**: MP4 Videos & static overlays for scene transitions
 
 ## 🚀 How to Run Locally
 
 1.  **Clone the repository** (or download the files).
-2.  **No installation needed** (uses CDN for Supabase SDK).
-3.  **Open the game**:
-    Since the project uses ES Modules, you need a local web server. You can use:
-    - **Live Server** (VS Code extension)
-    - **Python**: `python -m http.server`
-    - **Node**: `npx serve public`
-4.  Navigate to the local URL (usually `http://localhost:5500` or similar).
+2.  **Install dependencies**:
+    `npm install`
+3.  **Run the local server**:
+    `npm start`
+    (This will start a Node server on port 3000 by default)
+4.  Navigate to the local URL (e.g., `http://localhost:3000`).
 
 ## 📖 How to Play
 
@@ -50,19 +50,19 @@ Two players (or you vs. AI) each have **$10** and a **5x5 grid** (25 cells) to f
 
 | Item | Emoji | Price | HP | ATK | Special Mechanic |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| **Toothpaste** | 🦷 | $1 | 10 | 5 | +5 ATK if **Shampoo** is also in the box. |
-| **Shoes** | 👟 | $1 | 15 | 8 | Simple filler, no special effects. |
-| **Shampoo** | 🧴 | $1 | 25 | 5 | Enables the Toothpaste synergy bonus. |
-| **Spam** | 🥩 | $1 | 80 | 10 | **30% HP Penalty** if not placed in rows Y1-Y2. |
-| **Jeans** | 👖 | $2 | 50 | 5 | **+20 Shield** if no weapons/shoes are adjacent. |
-| **Chocolate** | 🍫 | $3 | 30 | 35 | **50% ATK Penalty** if not placed in rows Y4-Y5. |
+| **Toothpaste** | 🦷 | $1 | 8 | 6 | +5 ATK if **Shampoo** is also in the box. |
+| **Running Shoes** | 👟 | $1 | 12 | 10 | Pure filler, no special effects. |
+| **Shampoo** | 🧴 | $1 | 20 | 8 | Synergy core for Toothpaste. |
+| **Luncheon Meat** | 🥩 | $2 | 60 | 15 | **30% HP Penalty** if not placed in Bottom Section (Rows 4-5). |
+| **Jeans** | 👖 | $2 | 45 | 8 | **+20 Shield** if **Running Shoes** are also in the box. |
+| **Chocolate** | 🍫 | $3 | 25 | 40 | **50% ATK Penalty** if not placed in Top Section (Rows 1-2). |
 
 ## ☁️ Deployment
 
-You can deploy this app as a **Static Site** (no Node.js server required):
+You can deploy this app as a **Static Site** (no Node.js server required if only using Supabase) or as a **Node.js App**:
 1.  Push your code to a GitHub repository.
-2.  Connect to **Vercel**, **Netlify**, or **GitHub Pages**.
-3.  The app connects directly to Supabase for all multiplayer and database logic.
+2.  Connect to **Vercel**, **Netlify**, **Render**, or **GitHub Pages** (for static).
+3.  The app connects directly to Supabase for all multiplayer and database logic. Note: The experimental `server.js` is included for local serving and potential backend transitions.
 
 ---
 *Pack with love. Fight with power. Send it home!* 🇵🇭
