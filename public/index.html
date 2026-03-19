@@ -24,6 +24,15 @@
 
 <!-- LOGIN PHASE -->
 <div id="login-phase" class="phase-container" style="display:none;">
+  <div class="welcome-floaters" aria-hidden="true">
+    <span style="--x:8%; --delay:0s; --dur:16s; --size:34px;">📦</span>
+    <span style="--x:18%; --delay:2s; --dur:18s; --size:26px;">🍫</span>
+    <span style="--x:32%; --delay:5s; --dur:14s; --size:30px;">🧴</span>
+    <span style="--x:48%; --delay:1s; --dur:20s; --size:24px;">👟</span>
+    <span style="--x:66%; --delay:4s; --dur:17s; --size:28px;">🥩</span>
+    <span style="--x:78%; --delay:7s; --dur:15s; --size:32px;">👖</span>
+    <span style="--x:90%; --delay:3s; --dur:19s; --size:25px;">🦷</span>
+  </div>
   <div class="login-card">
     <h2>Welcome</h2>
     <input type="text" id="player-name-input" placeholder="Enter your name..." maxlength="12">
@@ -63,6 +72,7 @@
       <span>Budget</span>
       <span class="money" id="budget-display">$10</span>
     </div>
+    <div class="selection-tip">Click an item once to select it.</div>
     <div id="shop-list"></div>
   </div>
 
@@ -76,7 +86,7 @@
         <source src="assets/videos/A2 .mp4" type="video/mp4">
       </video>
       <!-- P1 static image — last frame of A2, shown after A2 ends -->
-      <img id="grid-bg-image" src="assets/images/P1 .PNG" alt="Box background" style="display:none;">
+      <img id="grid-bg-image" src="assets/images/P1.png" alt="Box background" style="display:none;">
 
       <div class="grid-container">
         <div class="row-indicators">
@@ -104,12 +114,12 @@
       <button class="btn btn-clear" onclick="clearAllItems()">Clear All</button>
       <button class="btn btn-fight" id="btn-fight" onclick="startBattle()">FIGHT!</button>
     </div>
-  </div>
 
-  <!-- Rules Panel (right column) -->
-  <div class="rules-panel">
-    <h4>Item Rules</h4>
-    <div id="rules-list"></div>
+    <!-- Rules Panel (moved below the reorder area) -->
+    <div class="rules-panel rules-panel-inline">
+      <h4>Item Rules</h4>
+      <div id="rules-list"></div>
+    </div>
   </div>
 </div>
 
