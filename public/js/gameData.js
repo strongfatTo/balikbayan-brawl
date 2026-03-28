@@ -1,10 +1,22 @@
 // ═══════════════════════════════════════════════════════
+//  CONFIGURABLE CONSTANTS
+// ═══════════════════════════════════════════════════════
+export const TOOTHPASTE_BASE_PRICE = 0.50;
+export const SELL_REFUND_RATE = 0.50;
+export const RESTOCK_COST = 1;
+export const STARTING_BUDGET = 10;
+export const REWARD_WIN = 3;
+export const REWARD_LOSS = 5;
+export const REWARD_DRAW = 4;
+export const SHOP_OFFERING_COUNT = 3;
+
+// ═══════════════════════════════════════════════════════
 //  ITEM DEFINITIONS
 // ═══════════════════════════════════════════════════════
 export const ITEMS = [
   {
     id: 'toothpaste', name: 'Toothpaste', emoji: '🦷',
-    price: 1, hp: 8, atk: 6,
+    price: TOOTHPASTE_BASE_PRICE, hp: 8, atk: 6,
     shapes: [[[0,0]]],
     colorClass: 'color-toothpaste',
     desc: 'Synergizes with Shampoo for +5 ATK',
@@ -59,6 +71,62 @@ export const ITEMS = [
     colorClass: 'color-chocolate',
     desc: '-50% self-ATK if NOT in Row 1 or 2',
     mechanic: { type: 'row-penalty', validRows: [3,4], penalty: { atk: 0.50 }, label: 'Top Zone OK', badLabel: '-50% self-ATK' }
+  },
+  // ── NEW ITEMS ──
+  {
+    id: 'bread', name: 'Bread', emoji: '🍞',
+    price: 2, hp: 18, atk: 12,
+    shapes: [
+      [[0,0],[0,1]],   // vertical 1x2
+      [[0,0],[1,0]]    // horizontal 2x1
+    ],
+    colorClass: 'color-bread',
+    desc: '2x ATK when in fight position #1',
+    mechanic: { type: 'first-position', label: '2x ATK (1st!)', badLabel: 'Not 1st' }
+  },
+  {
+    id: 'bleach', name: 'Bleach', emoji: '🧹',
+    price: 1.5, hp: 1, atk: 999,
+    shapes: [[[0,0]]],
+    colorClass: 'color-bleach',
+    desc: 'One-hit kill, but dies after one hit (HP=1)',
+    mechanic: { type: 'glass-cannon', label: 'Glass Cannon' }
+  },
+  {
+    id: 'pan', name: 'Pan', emoji: '🍳',
+    price: 2, hp: 30, atk: 24,
+    shapes: [
+      [[0,0],[1,0],[0,1]],           // L bottom-left
+      [[0,0],[0,1],[1,1]],           // L bottom-right
+      [[1,0],[0,1],[1,1]],           // L top-right
+      [[0,0],[1,0],[1,1]]            // L top-left
+    ],
+    colorClass: 'color-pan',
+    desc: '3x ATK, but takes 3x damage from Shoes/Jeans',
+    mechanic: { type: 'type-weakness', weakTo: ['shoes', 'jeans'], label: '3x ATK', badLabel: 'Weak to Shoes/Jeans' }
+  },
+  {
+    id: 'pillbox', name: 'Pill Box', emoji: '💊',
+    price: 2, hp: 20, atk: 10,
+    shapes: [
+      [[0,0],[1,0],[2,0],[1,1]],     // T pointing down
+      [[0,0],[0,1],[0,2],[1,1]],     // T pointing right
+      [[1,0],[0,1],[1,1],[2,1]],     // T pointing up
+      [[1,0],[1,1],[0,1],[1,2]]      // T pointing left  (fixed: was duplicate)
+    ],
+    colorClass: 'color-pillbox',
+    desc: 'Heals 30% max HP after killing an enemy',
+    mechanic: { type: 'on-kill-heal', healPct: 0.30, label: 'Heals 30% on kill' }
+  },
+  {
+    id: 'alcohol', name: 'Alcohol', emoji: '🍺',
+    price: 5, hp: 100, atk: 50,
+    shapes: [
+      [[0,0],[1,0],[2,0],[0,1],[1,1],[2,1],[0,2],[1,2],[2,2]]  // strict 3x3
+    ],
+    colorClass: 'color-alcohol',
+    desc: 'Very strong premium unit. Occupies a 3x3 space.',
+    mechanic: null
   }
 ];
 
@@ -67,7 +135,12 @@ export const BONUS_RULES = [
   { itemId: 'shampoo', emoji: '🧴', name: 'Shampoo', desc: 'With Toothpaste', effect: 'Enable +5 ATK', color: '#af7ac5' },
   { itemId: 'spam', emoji: '🥩', name: 'Luncheon Meat', desc: 'Place in Row 4 or 5', effect: 'No penalty', color: '#4ecca3', badEffect: '-30% self-HP', badColor: '#e94560' },
   { itemId: 'jeans', emoji: '👖', name: 'Jeans', desc: 'With Shoes', effect: '+20 Shield', color: '#4ecca3', badEffect: 'No Shield', badColor: '#e94560' },
-  { itemId: 'chocolate', emoji: '🍫', name: 'Chocolate', desc: 'Place in Row 1 or 2', effect: 'No penalty', color: '#f0c040', badEffect: '-50% self-ATK', badColor: '#e94560' }
+  { itemId: 'chocolate', emoji: '🍫', name: 'Chocolate', desc: 'Place in Row 1 or 2', effect: 'No penalty', color: '#f0c040', badEffect: '-50% self-ATK', badColor: '#e94560' },
+  { itemId: 'bread', emoji: '🍞', name: 'Bread', desc: 'Fight position #1', effect: '2x ATK', color: '#d4a574', badEffect: 'Normal ATK', badColor: '#888' },
+  { itemId: 'bleach', emoji: '🧹', name: 'Bleach', desc: 'One-hit kill', effect: 'ATK 999, HP 1', color: '#e8e8e8' },
+  { itemId: 'pan', emoji: '🍳', name: 'Pan', desc: 'High damage dealer', effect: '3x ATK', color: '#7a7a7a', badEffect: '3x DMG from Shoes/Jeans', badColor: '#e94560' },
+  { itemId: 'pillbox', emoji: '💊', name: 'Pill Box', desc: 'On enemy kill', effect: 'Heal 30% HP', color: '#e74c6f' },
+  { itemId: 'alcohol', emoji: '🍺', name: 'Alcohol', desc: '3x3 premium unit', effect: 'Raw power', color: '#d4a017' }
 ];
 
 export const GRID_W = 5;
@@ -143,6 +216,46 @@ export function checkMechanic(placedItem, allPlacedItems, grid) {
     return { active: true, text: mech.badLabel, shieldBonus: 0, hpMult: 1, atkMult: 1 };
   }
 
+  // ── NEW MECHANIC TYPES ──
+
+  // Bread: 2x ATK when in fight position #1
+  if (mech.type === 'first-position') {
+    const idx = allPlacedItems.indexOf(placedItem);
+    if (idx === 0) {
+      return { active: true, text: mech.label, shieldBonus: 0, hpMult: 1, atkMult: 2 };
+    }
+    return { active: true, text: mech.badLabel, shieldBonus: 0, hpMult: 1, atkMult: 1 };
+  }
+
+  // Bleach: glass cannon — informational label only, stats enforce behavior
+  if (mech.type === 'glass-cannon') {
+    return { active: true, text: mech.label, shieldBonus: 0, hpMult: 1, atkMult: 1 };
+  }
+
+  // Pan: 3x ATK, but takes 3x damage from shoes/jeans (weakness applied in battle.js)
+  if (mech.type === 'type-weakness') {
+    return { 
+      active: true, 
+      text: mech.label, 
+      shieldBonus: 0, 
+      hpMult: 1, 
+      atkMult: 3, 
+      weakTo: mech.weakTo 
+    };
+  }
+
+  // Pill Box: heals 30% after killing enemy (heal applied in battle.js)
+  if (mech.type === 'on-kill-heal') {
+    return { 
+      active: true, 
+      text: mech.label, 
+      shieldBonus: 0, 
+      hpMult: 1, 
+      atkMult: 1, 
+      onKillHeal: mech.healPct 
+    };
+  }
+
   return { active: false, text: '', shieldBonus: 0, hpMult: 1, atkMult: 1 };
 }
 
@@ -150,5 +263,11 @@ export function getEffectiveStats(pi, placedItems, playerGrid) {
   const m = checkMechanic(pi, placedItems, playerGrid);
   const hp = Math.floor(pi.item.hp * m.hpMult);
   const atk = Math.floor(pi.item.atk * m.atkMult) + (m.atkBonus || 0);
-  return { hp, atk, shield: m.shieldBonus || 0 };
+  return { 
+    hp, 
+    atk, 
+    shield: m.shieldBonus || 0,
+    weakTo: m.weakTo || null,
+    onKillHeal: m.onKillHeal || 0
+  };
 }

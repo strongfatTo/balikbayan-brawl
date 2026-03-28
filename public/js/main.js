@@ -1,11 +1,15 @@
-import { ITEMS, GRID_W, GRID_H, checkMechanic, getEffectiveStats } from './gameData.js';
+import { ITEMS, GRID_W, GRID_H, checkMechanic, getEffectiveStats,
+         TOOTHPASTE_BASE_PRICE, SELL_REFUND_RATE, RESTOCK_COST,
+         STARTING_BUDGET, REWARD_WIN, REWARD_LOSS, REWARD_DRAW,
+         SHOP_OFFERING_COUNT } from './gameData.js';
 
 // ═══════════════════════════════════════════════════════
 //  GAME STATE
 // ═══════════════════════════════════════════════════════
-let budget = 10;
+let budget = STARTING_BUDGET;
 let playerGrid = Array.from({length: GRID_H}, () => Array(GRID_W).fill(null));
 let placedItems = [];
+let shopOfferings = [];    // 3 random items shown in shop
 let selectedItem = null;
 let selectedShapeIdx = 0;
 let hoverCells = [];
@@ -13,6 +17,7 @@ let placedIdCounter = 0;
 let gridCells = [];
 let lastHoverGx = -1, lastHoverGy = -1;
 let gridBuilt = false;
+let previousBudget = STARTING_BUDGET;  // for wallet animation
 
 // Multiplayer state
 let supabase = null;
@@ -35,10 +40,58 @@ const SUPABASE_URL = 'https://svjwcroknmzdkkjxclww.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2andjcm9rbm16ZGtranhjbHd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2NTI4ODgsImV4cCI6MjA4ODIyODg4OH0.P6E46tZ2oGUCHu7lE7BuzCbbNyuTOnIiRtMIM50L_OY';
 
 // ═══════════════════════════════════════════════════════
+//  WALLET ANIMATION
+// ═══════════════════════════════════════════════════════
+function updateBudgetDisplay() {
+  const el = document.getElementById('budget-display');
+  const newBudget = budget;
+  el.textContent = `$${parseFloat(newBudget.toFixed(2))}`;
+
+  // Animate if budget changed
+  if (newBudget > previousBudget) {
+    el.classList.remove('wallet-up', 'wallet-down');
+    void el.offsetWidth; // Force reflow to restart animation
+    el.classList.add('wallet-up');
+    el.addEventListener('animationend', () => el.classList.remove('wallet-up'), { once: true });
+  } else if (newBudget < previousBudget) {
+    el.classList.remove('wallet-up', 'wallet-down');
+    void el.offsetWidth;
+    el.classList.add('wallet-down');
+    el.addEventListener('animationend', () => el.classList.remove('wallet-down'), { once: true });
+  }
+  previousBudget = newBudget;
+}
+
+// ═══════════════════════════════════════════════════════
+//  SHOP RESTOCK SYSTEM
+// ═══════════════════════════════════════════════════════
+function restockShop() {
+  shopOfferings = [];
+  const availableItems = [...ITEMS];
+  for (let i = 0; i < SHOP_OFFERING_COUNT; i++) {
+    if (availableItems.length === 0) break;
+    const randomIdx = Math.floor(Math.random() * availableItems.length);
+    shopOfferings.push(availableItems[randomIdx]);
+    availableItems.splice(randomIdx, 1);
+  }
+}
+
+window.restockShopBtn = function() {
+  if (budget < RESTOCK_COST) return;
+  budget -= RESTOCK_COST;
+  restockShop();
+  selectedItem = null;
+  selectedShapeIdx = 0;
+  renderShop();
+  updateBudgetDisplay();
+};
+
+// ═══════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════
 function init() {
-  budget = 10;
+  budget = STARTING_BUDGET;
+  previousBudget = STARTING_BUDGET;
   playerGrid = Array.from({length: GRID_H}, () => Array(GRID_W).fill(null));
   placedItems = [];
   selectedItem = null;
@@ -72,6 +125,8 @@ function init() {
   resetGridBackground();
 
   if (!gridBuilt) { buildGrid(); gridBuilt = true; }
+
+  restockShop();
   renderShop();
   renderGrid();
   renderRules();
@@ -209,13 +264,9 @@ function showP1Background() {
 function revealShopUI() {
   const shopPhase = document.getElementById('shop-phase');
   const header = document.getElementById('main-header');
-  console.log('[DEBUG] revealShopUI: removing a2-playing class, shopPhase:', shopPhase, 'header:', header);
+  console.log('[DEBUG] revealShopUI: removing a2-playing class');
   shopPhase.classList.remove('a2-playing');
   header.classList.remove('header-hidden');
-  console.log('[DEBUG] revealShopUI done, classes:', {
-    shopPhase: shopPhase.className,
-    header: header ? header.className : 'n/a'
-  });
 }
 
 /** Reset grid background (hide both A2 and P1) */
@@ -488,6 +539,15 @@ async function reportBattleResult(result) {
     myState.record.l++;
   }
   myState.processedResult = true;
+
+  // Post-round money reward (persistent wallet)
+  if (result === 'win') {
+    budget += REWARD_WIN;
+  } else if (result === 'loss') {
+    budget += REWARD_LOSS;
+  } else {
+    budget += REWARD_DRAW;
+  }
   
   console.log('Updating presence with score:', myState.score);
   await channel.track(myState);
@@ -635,30 +695,42 @@ function updateLobbyUI(players) {
   roomDisplay.textContent = `Room: ${currentRoomId}`;
   list.innerHTML = '';
   
-  let isAdmin = false;
+  let isAdminLocal = false;
   players.forEach(p => {
     const li = document.createElement('li');
     li.textContent = p.name + (p.isAdmin ? ' (Admin)' : '');
     list.appendChild(li);
-    if (p.id === socket.id && p.isAdmin) isAdmin = true;
+    if (p.id === myPresenceId && p.isAdmin) isAdminLocal = true;
   });
 
-  startBtn.style.display = isAdmin ? 'inline-block' : 'none';
+  startBtn.style.display = isAdminLocal ? 'inline-block' : 'none';
   document.getElementById('lobby-status').textContent = players.length < 2 ? 'Waiting for more players...' : 'Ready to start!';
 }
 
+// ═══════════════════════════════════════════════════════
+//  ROUND RESET — Items stay on grid, wallet persists
+// ═══════════════════════════════════════════════════════
 function resetForNewRound() {
-  budget = 10;
-  playerGrid = Array.from({length: GRID_H}, () => Array(GRID_W).fill(null));
-  placedItems = [];
+  // Items stay on grid between rounds
+  // Budget persists — NOT reset here
+  
+  // Restock shop with new random offerings
+  restockShop();
+
   selectedItem = null;
   selectedShapeIdx = 0;
   lastHoverGx = -1;
   lastHoverGy = -1;
+
   renderShop();
   renderGrid();
   renderRules();
   updateStats();
+  updateBudgetDisplay();
+
+  // Update restock button state
+  const restockBtn = document.getElementById('btn-restock');
+  if (restockBtn) restockBtn.disabled = budget < RESTOCK_COST;
 }
 
 function showLeaderboard(data) {
@@ -701,6 +773,8 @@ window.startAIGame = function() {
   isAIGame = true;
   gameStatus = 'shopping';
   currentRound = 1;
+  budget = STARTING_BUDGET;
+  previousBudget = STARTING_BUDGET;
   tournamentScores = { player: 0, rival: 0, record: { w: 0, d: 0, l: 0 } };
   
   document.getElementById('round-display').textContent = `Round 1 / 5`;
@@ -747,11 +821,11 @@ window.backToStartMenu = function(force = false) {
 function generateAIGrid() {
   const aiGrid = Array.from({length: GRID_H}, () => Array(GRID_W).fill(null));
   const aiPlacedItems = [];
-  let aiBudget = 10;
+  let aiBudget = STARTING_BUDGET;
   let attempts = 0;
   
   // Simple AI: try to place random items until budget is low or too many attempts
-  while (aiBudget > 0 && attempts < 50) {
+  while (aiBudget > 0 && attempts < 80) {
     attempts++;
     const randomItem = ITEMS[Math.floor(Math.random() * ITEMS.length)];
     if (randomItem.price > aiBudget) continue;
@@ -783,13 +857,16 @@ function handleAIResult(result) {
   if (result === 'win') {
     tournamentScores.player += 3;
     tournamentScores.record.w++;
+    budget += REWARD_WIN;
   } else if (result === 'draw') {
     tournamentScores.player += 2;
     tournamentScores.rival += 2;
     tournamentScores.record.d++;
+    budget += REWARD_DRAW;
   } else {
     tournamentScores.rival += 3;
     tournamentScores.record.l++;
+    budget += REWARD_LOSS;
   }
   
   setTimeout(() => {
@@ -815,7 +892,7 @@ function handleAIResult(result) {
 function renderShop() {
   const container = document.getElementById('shop-list');
   container.innerHTML = '';
-  ITEMS.forEach(item => {
+  shopOfferings.forEach(item => {
     const card = document.createElement('div');
     card.className = 'item-card';
     if (item.price > budget) card.classList.add('disabled');
@@ -890,10 +967,33 @@ function renderShop() {
     price.textContent = `$${item.price}`;
     card.appendChild(price);
 
+    // Rotate button (only for items with >1 shape)
+    if (item.shapes.length > 1) {
+      const rotateBtn = document.createElement('button');
+      rotateBtn.className = 'rotate-btn';
+      rotateBtn.textContent = 'R';
+      rotateBtn.title = 'Rotate shape';
+      rotateBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (selectedItem && selectedItem.id === item.id) {
+          selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
+          renderShop();
+          if (lastHoverGx >= 0 && lastHoverGy >= 0) updateHoverPreview(lastHoverGx, lastHoverGy);
+        }
+      });
+      card.appendChild(rotateBtn);
+    }
+
     card.addEventListener('click', () => selectItem(item));
     container.appendChild(card);
   });
-  document.getElementById('budget-display').textContent = `$${budget}`;
+
+  // Update budget display with animation
+  updateBudgetDisplay();
+
+  // Update restock button state
+  const restockBtn = document.getElementById('btn-restock');
+  if (restockBtn) restockBtn.disabled = budget < RESTOCK_COST;
 }
 
 function selectItem(item) {
@@ -908,6 +1008,10 @@ function selectItem(item) {
   renderShop();
 }
 
+// ═══════════════════════════════════════════════════════
+//  SHIP STORAGE RENDERING
+// ═══════════════════════════════════════════════════════
+//  RULES PANEL
 // ═══════════════════════════════════════════════════════
 //  RULES PANEL
 // ═══════════════════════════════════════════════════════
@@ -1001,7 +1105,7 @@ function buildGrid() {
     if (!t) return;
     const gx = parseInt(t.dataset.x), gy = parseInt(t.dataset.y);
     const occupant = playerGrid[gy][gx];
-    if (occupant) { e.preventDefault(); removeItem(occupant.placedId); }
+    if (occupant) { e.preventDefault(); removeItemFromGrid(occupant.placedId); }
   });
 }
 
@@ -1037,11 +1141,16 @@ function renderGrid() {
   renderPlacedItemsList();
 }
 
+// ═══════════════════════════════════════════════════════
+//  DRAG AND DROP — Extended for storage + sell box
+// ═══════════════════════════════════════════════════════
 let dndState = {
   draggingEl: null,
   ghostEl: null,
   placeholder: null,
-  dragOffset: { x: 0, y: 0 }
+  dragOffset: { x: 0, y: 0 },
+  dragSource: null,    // 'placed'
+  dragItemData: null   // the placed item data
 };
 
 function handlePointerMove(e) {
@@ -1051,46 +1160,59 @@ function handlePointerMove(e) {
   const y = e.clientY - dndState.dragOffset.y;
   dndState.ghostEl.style.transform = `translate(${x}px, ${y}px) scale(0.95)`;
 
-  const listEl = document.getElementById('placed-items-list');
-  // Get all valid sibling tags, ignoring the one being dragged and the placeholder
-  const siblings = Array.from(listEl.querySelectorAll('.placed-item-tag:not(.placeholder)'))
-    .filter(el => el !== dndState.draggingEl && el.style.display !== 'none');
+  // Check drop targets for visual feedback
+  const sellBox = document.getElementById('sell-box');
+  const sellRect = sellBox.getBoundingClientRect();
 
-  if (siblings.length === 0) return;
+  const overSellBox = e.clientX >= sellRect.left && e.clientX <= sellRect.right &&
+                      e.clientY >= sellRect.top && e.clientY <= sellRect.bottom;
 
-  let closestSibling = null;
-  let minDistance = Infinity;
+  // Update sell box visual feedback  
+  if (overSellBox && dndState.dragSource === 'placed') {
+    sellBox.classList.add('drop-hover');
+  } else {
+    sellBox.classList.remove('drop-hover');
+  }
 
-  // Find the closest visual sibling based on a weighted 2D distance
-  siblings.forEach(sibling => {
-    const rect = sibling.getBoundingClientRect();
-    const midX = rect.left + rect.width / 2;
-    const midY = rect.top + rect.height / 2;
-    
-    const dx = e.clientX - midX;
-    const dy = e.clientY - midY;
-    
-    // Multiply dy by a weight (e.g., 4) to prioritize snapping to the correct row first
-    const distance = dx * dx + (dy * dy * 4);
-    
-    if (distance < minDistance) {
-      minDistance = distance;
-      closestSibling = sibling;
-    }
-  });
+  // If dragging within placed items list, do reorder logic
+  if (dndState.dragSource === 'placed' && !overSellBox) {
+    const listEl = document.getElementById('placed-items-list');
+    const siblings = Array.from(listEl.querySelectorAll('.placed-item-tag:not(.placeholder)'))
+      .filter(el => el !== dndState.draggingEl && el.style.display !== 'none');
 
-  if (closestSibling) {
-    const rect = closestSibling.getBoundingClientRect();
-    const midX = rect.left + rect.width / 2;
-    
-    // Insert before or after the closest sibling depending on the horizontal half
-    if (e.clientX > midX) {
-      if (dndState.placeholder !== closestSibling.nextSibling) {
-        listEl.insertBefore(dndState.placeholder, closestSibling.nextSibling);
+    if (siblings.length === 0) return;
+
+    let closestSibling = null;
+    let minDistance = Infinity;
+
+    siblings.forEach(sibling => {
+      const rect = sibling.getBoundingClientRect();
+      const midX = rect.left + rect.width / 2;
+      const midY = rect.top + rect.height / 2;
+      
+      const dx = e.clientX - midX;
+      const dy = e.clientY - midY;
+      
+      const distance = dx * dx + (dy * dy * 4);
+      
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestSibling = sibling;
       }
-    } else {
-      if (dndState.placeholder !== closestSibling) {
-        listEl.insertBefore(dndState.placeholder, closestSibling);
+    });
+
+    if (closestSibling && dndState.placeholder) {
+      const rect = closestSibling.getBoundingClientRect();
+      const midX = rect.left + rect.width / 2;
+      
+      if (e.clientX > midX) {
+        if (dndState.placeholder !== closestSibling.nextSibling) {
+          listEl.insertBefore(dndState.placeholder, closestSibling.nextSibling);
+        }
+      } else {
+        if (dndState.placeholder !== closestSibling) {
+          listEl.insertBefore(dndState.placeholder, closestSibling);
+        }
       }
     }
   }
@@ -1099,31 +1221,109 @@ function handlePointerMove(e) {
 function handlePointerUp(e) {
   if (!dndState.draggingEl) return;
   
-  const listEl = document.getElementById('placed-items-list');
-  
+  const sellBox = document.getElementById('sell-box');
+  const sellRect = sellBox.getBoundingClientRect();
+
+  const overSellBox = e.clientX >= sellRect.left && e.clientX <= sellRect.right &&
+                      e.clientY >= sellRect.top && e.clientY <= sellRect.bottom;
+
+  // Clean up visual feedback
+  sellBox.classList.remove('drop-hover');
+
   if (dndState.ghostEl && dndState.ghostEl.parentNode) {
     dndState.ghostEl.parentNode.removeChild(dndState.ghostEl);
   }
-  
-  if (dndState.placeholder && dndState.placeholder.parentNode === listEl) {
-    listEl.insertBefore(dndState.draggingEl, dndState.placeholder);
-    dndState.placeholder.parentNode.removeChild(dndState.placeholder);
+
+  if (dndState.dragSource === 'placed') {
+    const listEl = document.getElementById('placed-items-list');
+    const piData = dndState.dragItemData;
+
+    if (overSellBox && piData) {
+      // SELL: 50% refund
+      const refund = piData.item.price * SELL_REFUND_RATE;
+      piData.cells.forEach(c => { playerGrid[c.y][c.x] = null; });
+      budget += refund;
+      const idx = placedItems.findIndex(p => p.placedId === piData.placedId);
+      if (idx !== -1) placedItems.splice(idx, 1);
+
+      // Clean up drag elements
+      if (dndState.placeholder && dndState.placeholder.parentNode) {
+        dndState.placeholder.remove();
+      }
+      if (dndState.draggingEl && dndState.draggingEl.parentNode) {
+        dndState.draggingEl.remove();
+      }
+
+      renderShop();
+      renderGrid();
+      renderRules();
+      updateStats();
+      updateBudgetDisplay();
+    } else {
+      // REORDER: default behavior
+      if (dndState.placeholder && dndState.placeholder.parentNode === listEl) {
+        listEl.insertBefore(dndState.draggingEl, dndState.placeholder);
+        dndState.placeholder.parentNode.removeChild(dndState.placeholder);
+      }
+      
+      dndState.draggingEl.style.display = '';
+      dndState.draggingEl.classList.remove('dragging');
+      
+      const newOrderIds = Array.from(listEl.querySelectorAll('.placed-item-tag:not(.placeholder)'))
+        .map(el => parseInt(el.dataset.id));
+      placedItems = newOrderIds.map(id => placedItems.find(p => p.placedId === id)).filter(Boolean);
+      
+      renderPlacedItemsList();
+      renderGrid();
+    }
+  } else if (dndState.dragSource === 'storage') {
+    // Storage no longer exists, just re-render (shouldn't happen now)
   }
-  
-  dndState.draggingEl.style.display = '';
-  dndState.draggingEl.classList.remove('dragging');
-  
-  const newOrderIds = Array.from(listEl.querySelectorAll('.placed-item-tag:not(.placeholder)'))
-    .map(el => parseInt(el.dataset.id));
-  placedItems = newOrderIds.map(id => placedItems.find(p => p.placedId === id));
-  
-  dndState = { draggingEl: null, ghostEl: null, placeholder: null, dragOffset: { x: 0, y: 0 } };
+
+  dndState = { draggingEl: null, ghostEl: null, placeholder: null, dragOffset: { x: 0, y: 0 }, dragSource: null, dragItemData: null };
   
   window.removeEventListener('pointermove', handlePointerMove);
   window.removeEventListener('pointerup', handlePointerUp);
-  
-  renderPlacedItemsList();
-  renderGrid();
+}
+
+function startStorageDrag(e, tag, storageIdx) {
+  tag.setPointerCapture(e.pointerId);
+  const rect = tag.getBoundingClientRect();
+  dndState.dragOffset = {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top
+  };
+  dndState.draggingEl = tag;
+  dndState.dragSource = 'storage';
+  dndState.dragItemData = storageIdx;
+
+  dndState.ghostEl = tag.cloneNode(true);
+  dndState.ghostEl.style.position = 'fixed';
+  dndState.ghostEl.style.top = '0px';
+  dndState.ghostEl.style.left = '0px';
+  dndState.ghostEl.style.width = `${rect.width}px`;
+  dndState.ghostEl.style.height = `${rect.height}px`;
+  dndState.ghostEl.style.margin = '0';
+  dndState.ghostEl.style.pointerEvents = 'none';
+  dndState.ghostEl.style.zIndex = '9999';
+  dndState.ghostEl.style.opacity = '0.85';
+  dndState.ghostEl.style.boxShadow = '0 12px 24px rgba(0,0,0,0.3)';
+  dndState.ghostEl.style.transition = 'none';
+  dndState.ghostEl.style.transformOrigin = 'top left';
+
+  const initX = e.clientX - dndState.dragOffset.x;
+  const initY = e.clientY - dndState.dragOffset.y;
+  dndState.ghostEl.style.transform = `translate(${initX}px, ${initY}px) scale(0.95)`;
+
+  document.body.appendChild(dndState.ghostEl);
+
+  tag.style.opacity = '0.3';
+
+  window.addEventListener('pointermove', handlePointerMove);
+  window.addEventListener('pointerup', (e2) => {
+    tag.style.opacity = '';
+    handlePointerUp(e2);
+  }, { once: true });
 }
 
 function renderPlacedItemsList() {
@@ -1146,17 +1346,17 @@ function renderPlacedItemsList() {
       tag.title = bonusText;
     }
 
+    // No X button — drag to storage/sell instead
     tag.innerHTML = `
       <span class="order-badge">${idx + 1}</span>
       <span class="item-emoji">
         ${pi.item.image ? `<img src="${pi.item.image}" alt="${pi.item.name}" style="height:24px; width:24px; object-fit:contain;" draggable="false">` : pi.item.emoji}
       </span>
       <div class="info-btn">i</div>
-      <span class="x" title="Remove">✕</span>
     `;
 
     tag.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.x') || e.target.closest('.info-btn')) return;
+      if (e.target.closest('.info-btn')) return;
       
       e.preventDefault();
       tag.setPointerCapture(e.pointerId);
@@ -1168,6 +1368,8 @@ function renderPlacedItemsList() {
       };
 
       dndState.draggingEl = tag;
+      dndState.dragSource = 'placed';
+      dndState.dragItemData = pi;
       tag.classList.add('dragging');
       
       dndState.ghostEl = tag.cloneNode(true);
@@ -1231,43 +1433,57 @@ function renderPlacedItemsList() {
     const infoBtn = e.target.closest('.info-btn');
     if (infoBtn) document.getElementById('item-popover').classList.remove('show');
   };
-
-  // Remove button
-  listEl.onclick = (e) => {
-    const xBtn = e.target.closest('.x');
-    if (!xBtn) return;
-    const tag = xBtn.closest('.placed-item-tag');
-    if (!tag) return;
-    document.getElementById('item-popover').classList.remove('show');
-    removeItem(parseInt(tag.dataset.id));
-  };
 }
 
-function removeItem(placedId) {
+// ═══════════════════════════════════════════════════════
+//  ITEM MANAGEMENT — Remove / Store / Sell
+// ═══════════════════════════════════════════════════════
+
+/** Remove item from grid and sell for 50% refund */
+function removeItemFromGrid(placedId) {
   const idx = placedItems.findIndex(p => p.placedId === placedId);
   if (idx === -1) return;
   const pi = placedItems[idx];
   pi.cells.forEach(c => { playerGrid[c.y][c.x] = null; });
-  budget += pi.item.price;
+  budget += pi.item.price * SELL_REFUND_RATE;
   placedItems.splice(idx, 1);
   renderShop();
   renderGrid();
   renderRules();
   updateStats();
+  updateBudgetDisplay();
 }
 
-// Ensure functions are available globally if referenced by HTML onclick
+/** Sell item — 50% refund */
+function sellItem(placedId) {
+  const idx = placedItems.findIndex(p => p.placedId === placedId);
+  if (idx === -1) return;
+  const pi = placedItems[idx];
+  pi.cells.forEach(c => { playerGrid[c.y][c.x] = null; });
+  budget += pi.item.price * SELL_REFUND_RATE;
+  placedItems.splice(idx, 1);
+  renderShop();
+  renderGrid();
+  renderRules();
+  updateStats();
+  updateBudgetDisplay();
+}
+
+// Clear All — remove all items and sell for 50% refund
 window.clearAllItems = function() {
+  let totalRefund = 0;
   placedItems.forEach(pi => {
     pi.cells.forEach(c => { playerGrid[c.y][c.x] = null; });
-    budget += pi.item.price;
+    totalRefund += pi.item.price * SELL_REFUND_RATE;
   });
+  budget += totalRefund;
   placedItems = [];
   selectedItem = null;
   renderShop();
   renderGrid();
   renderRules();
   updateStats();
+  updateBudgetDisplay();
 };
 
 window.startBattle = async function() {
@@ -1358,6 +1574,7 @@ function onCellClick(gx, gy) {
   renderGrid();
   renderRules();
   updateStats();
+  updateBudgetDisplay();
   // Ensure hover preview is updated for the now-empty selection
   if (lastHoverGx >= 0 && lastHoverGy >= 0) updateHoverPreview(lastHoverGx, lastHoverGy);
 }

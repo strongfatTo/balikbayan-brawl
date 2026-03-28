@@ -10,13 +10,25 @@ export function startMultiplayerBattle(placedItems, playerGrid, enemyItems, enem
   const playerUnits = placedItems.map((pi, idx) => {
     const s = getEffectiveStats(pi, placedItems, playerGrid);
     const m = checkMechanic(pi, placedItems, playerGrid);
-    return { id: `p-${idx}`, name: pi.item.name, emoji: pi.item.emoji, colorClass: pi.item.colorClass, hp: s.hp, maxHp: s.hp, atk: s.atk, shield: s.shield, bonus: m.text };
+    return {
+      id: `p-${idx}`, name: pi.item.name, emoji: pi.item.emoji, colorClass: pi.item.colorClass,
+      itemId: pi.item.id,
+      hp: s.hp, maxHp: s.hp, atk: s.atk, shield: s.shield, bonus: m.text,
+      weakTo: s.weakTo || null,
+      onKillHeal: s.onKillHeal || 0
+    };
   });
 
   const enemyUnits = enemyItems.map((pi, idx) => {
     const s = getEffectiveStats(pi, enemyItems, enemyGrid);
     const m = checkMechanic(pi, enemyItems, enemyGrid);
-    return { id: `e-${idx}`, name: pi.item.name, emoji: pi.item.emoji, colorClass: pi.item.colorClass, hp: s.hp, maxHp: s.hp, atk: s.atk, shield: s.shield, bonus: m.text };
+    return {
+      id: `e-${idx}`, name: pi.item.name, emoji: pi.item.emoji, colorClass: pi.item.colorClass,
+      itemId: pi.item.id,
+      hp: s.hp, maxHp: s.hp, atk: s.atk, shield: s.shield, bonus: m.text,
+      weakTo: s.weakTo || null,
+      onKillHeal: s.onKillHeal || 0
+    };
   });
 
   renderTeamList('team-list-player', playerUnits);
@@ -100,6 +112,7 @@ function createSprite(unit, side) {
   el.innerHTML = `
     <div class="sprite-emoji">${unit.emoji}</div>
     <div class="sprite-name">${unit.name}</div>
+    <div class="hp-bar-bg"><div class="hp-bar" style="width:100%"></div></div>
   `;
   return el;
 }
@@ -117,6 +130,18 @@ function showDmgNumber(stage, x, y, dmg, isPlayer) {
   el.textContent = `-${dmg}`;
   el.style.left = x + 'px';
   el.style.top = y + 'px';
+  stage.appendChild(el);
+  setTimeout(() => el.remove(), 800);
+}
+
+function showHealNumber(stage, x, y, heal) {
+  const el = document.createElement('div');
+  el.className = 'dmg-number player-dmg';
+  el.textContent = `+${heal}`;
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  el.style.color = '#7fff7f';
+  el.style.textShadow = '0 0 10px rgba(127,255,127,0.8)';
   stage.appendChild(el);
   setTimeout(() => el.remove(), 800);
 }
@@ -141,12 +166,11 @@ function runAnimatedBattle(playerUnits, enemyUnits, onComplete) {
   const eAlive = () => enemyUnits.filter(u => u.hp > 0);
 
   let pSprite = null, eSprite = null;
-  let roundNum = 0; // Renamed to roundNum to avoid confusion with tournament round
+  let roundNum = 0;
 
   function spawnSprites() {
     const pa = pAlive(), ea = eAlive();
     
-    // Update waiting list counts
     updateWaitingList(pa.length, ea.length);
 
     if (pa.length === 0 || ea.length === 0) return;
@@ -179,8 +203,20 @@ function runAnimatedBattle(playerUnits, enemyUnits, onComplete) {
 
     addLog(log, 'round-header', `--- Round ${roundNum} ---`);
     const pUnit = pa[0], eUnit = ea[0];
-    const dmgToEnemy = Math.max(1, pUnit.atk);
-    const dmgToPlayer = Math.max(1, eUnit.atk);
+
+    // Base damage
+    let dmgToEnemy = Math.max(1, pUnit.atk);
+    let dmgToPlayer = Math.max(1, eUnit.atk);
+
+    // Pan type-weakness: takes 3x damage from shoes/jeans
+    if (pUnit.weakTo && pUnit.weakTo.includes(eUnit.itemId)) {
+      dmgToPlayer *= 3;
+      addLog(log, 'bonus-line', `  ${pUnit.emoji} ${pUnit.name} is WEAK to ${eUnit.emoji} ${eUnit.name}! (3x damage)`);
+    }
+    if (eUnit.weakTo && eUnit.weakTo.includes(pUnit.itemId)) {
+      dmgToEnemy *= 3;
+      addLog(log, 'bonus-line', `  ${eUnit.emoji} ${eUnit.name} is WEAK to ${pUnit.emoji} ${pUnit.name}! (3x damage)`);
+    }
 
     // Phase 1: both charge forward (attack animation)
     pSprite.classList.add('sprite-attacking-right');
@@ -222,16 +258,39 @@ function runAnimatedBattle(playerUnits, enemyUnits, onComplete) {
 
       let deathDelay = 0;
 
-      // Check deaths
+      // Check deaths and apply on-kill-heal
       if (eUnit.hp <= 0) {
         addLog(log, 'kill-line', `  ${eUnit.emoji} ${eUnit.name} (Rival) DESTROYED!`);
         eSprite.classList.add('sprite-dying');
         deathDelay = 600;
+
+        // Pill Box on-kill-heal for player unit
+        if (pUnit.hp > 0 && pUnit.onKillHeal > 0) {
+          const healAmt = Math.floor(pUnit.maxHp * pUnit.onKillHeal);
+          pUnit.hp = Math.min(pUnit.maxHp, pUnit.hp + healAmt);
+          addLog(log, 'bonus-line', `  ${pUnit.emoji} ${pUnit.name} heals ${healAmt} HP! (On-kill heal)`);
+          updateSpriteHp(pSprite, pUnit);
+          // Show heal number
+          const pRect = pSprite.getBoundingClientRect();
+          const stageRect = stage.getBoundingClientRect();
+          showHealNumber(stage, pRect.left - stageRect.left + 30, pRect.top - stageRect.top - 30, healAmt);
+        }
       }
       if (pUnit.hp <= 0) {
         addLog(log, 'kill-line', `  ${pUnit.emoji} ${pUnit.name} (Yours) DESTROYED!`);
         pSprite.classList.add('sprite-dying');
         deathDelay = 600;
+
+        // Pill Box on-kill-heal for enemy unit
+        if (eUnit.hp > 0 && eUnit.onKillHeal > 0) {
+          const healAmt = Math.floor(eUnit.maxHp * eUnit.onKillHeal);
+          eUnit.hp = Math.min(eUnit.maxHp, eUnit.hp + healAmt);
+          addLog(log, 'bonus-line', `  ${eUnit.emoji} ${eUnit.name} heals ${healAmt} HP! (On-kill heal)`);
+          updateSpriteHp(eSprite, eUnit);
+          const eRect = eSprite.getBoundingClientRect();
+          const stageRect = stage.getBoundingClientRect();
+          showHealNumber(stage, eRect.left - stageRect.left + 30, eRect.top - stageRect.top - 30, healAmt);
+        }
       }
 
       setTimeout(() => {

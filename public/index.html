@@ -72,8 +72,18 @@
       <span>Budget</span>
       <span class="money" id="budget-display">$10</span>
     </div>
-    <div class="selection-tip">Click an item once to select it.</div>
+    <div class="selection-tip">Click an item to select, then click grid to place.</div>
     <div id="shop-list"></div>
+    <button class="btn-restock" id="btn-restock" onclick="restockShopBtn()">Restock ($1)</button>
+
+    <!-- Sell Box -->
+    <div class="sell-box" id="sell-box">
+      <span class="sell-icon">$</span>
+      <div>
+        <div class="sell-label">SELL</div>
+        <div class="sell-hint">Drag item here (50% refund)</div>
+      </div>
+    </div>
   </div>
 
   <div class="grid-panel">
