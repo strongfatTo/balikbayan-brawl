@@ -35,6 +35,274 @@ let lobbyTimer = null;
 let isAdvancingRound = false;
 let introFinished = false;
 let a2HasPlayed = false;
+let adminSubmissions = {}; // targetId -> { items, grid }
+let adminProcessed = {}; // targetId -> boolean
+let matchedRound = null;
+let activeBattleRound = null;
+let reportedResultRound = null;
+let isLeavingRoom = false;
+let reconnectTimer = null;
+let reconnectAttempt = 0;
+let reconnectInProgress = false;
+
+async function sendBroadcast(event, payload, attempts = 2, delayMs = 250) {
+  if (!channel) return;
+
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const message = { type: 'broadcast', event, payload };
+      // Use REST only while the realtime channel is not fully joined yet.
+      if (typeof channel.httpSend === 'function' && channel.state !== 'joined') {
+        await channel.httpSend(event, payload);
+      } else {
+        await channel.send(message);
+      }
+    } catch (err) {
+      console.error(`Broadcast failed: ${event}`, err);
+    }
+
+    if (i < attempts - 1) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
+function getMyPresenceState() {
+  const existing = presenceState[myPresenceId]?.[0];
+  const existingRecord = existing?.record || {};
+
+  return {
+    id: myPresenceId,
+    name: existing?.name || playerName,
+    joinedAt: existing?.joinedAt || new Date().toISOString(),
+    score: existing?.score || 0,
+    record: {
+      w: existingRecord.w || 0,
+      d: existingRecord.d || 0,
+      l: existingRecord.l || 0
+    },
+    submitted: existing?.submitted || false,
+    processedResult: existing?.processedResult || false,
+    currentRound: existing?.currentRound || currentRound
+  };
+}
+
+function scheduleChannelReconnect() {
+  if (!channel || !currentRoomId || isLeavingRoom || isAIGame) return;
+  if (reconnectTimer) return;
+
+  reconnectAttempt += 1;
+  const delay = Math.min(1000 * reconnectAttempt, 3000);
+  console.warn(`Realtime channel closed. Reconnecting in ${delay}ms...`);
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (!channel || isLeavingRoom) return;
+
+    try {
+      reconnectRoomChannel();
+    } catch (err) {
+      console.error('Realtime reconnect failed to start:', err);
+      scheduleChannelReconnect();
+    }
+  }, delay);
+}
+
+async function ensureChannelReady(timeoutMs = 2500) {
+  if (!currentRoomId || isLeavingRoom) return false;
+  if (channel && channel.state === 'joined') return true;
+
+  if ((!channel || channel.state === 'closed') && !reconnectInProgress) {
+    reconnectRoomChannel();
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!channel || isLeavingRoom) return false;
+    if (channel.state === 'joined') return true;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  return channel.state === 'joined';
+}
+
+async function safeTrackPresence(nextState, context = 'presence update') {
+  const ready = await ensureChannelReady();
+  if (!ready) {
+    console.warn(`Presence track skipped during ${context}: channel not ready.`);
+    return false;
+  }
+
+  try {
+    await channel.track(nextState);
+    presenceState[myPresenceId] = [nextState];
+    return true;
+  } catch (err) {
+    console.warn(`Presence track failed during ${context}:`, err);
+    return false;
+  }
+}
+
+async function handleChannelStatus(status, err, expectedChannel = channel) {
+  if (expectedChannel !== channel) return;
+
+  console.log('Supabase Channel Status:', status);
+  if (err) console.error('Subscription Error:', err);
+
+  if (status === 'SUBSCRIBED') {
+    reconnectInProgress = false;
+    reconnectAttempt = 0;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
+    console.log('Joined channel successfully');
+    const myState = getMyPresenceState();
+    await safeTrackPresence(myState, 'channel subscribe');
+
+    if (gameStatus === 'login') {
+      gameStatus = 'lobby';
+      switchPhase('lobby');
+    }
+  } else if (status === 'CHANNEL_ERROR') {
+    alert('Could not join room. Realtime might be disabled in Supabase project.');
+  } else if (status === 'CLOSED') {
+    scheduleChannelReconnect();
+  }
+}
+
+function attachChannelListeners(targetChannel) {
+  targetChannel
+    .on('presence', { event: 'sync' }, () => {
+      if (targetChannel !== channel) return;
+
+      presenceState = targetChannel.presenceState();
+      
+      const players = [];
+      for (const key in presenceState) {
+        players.push(presenceState[key][0]);
+      }
+      
+      // Limit room size to 2
+      if (players.length > 2 && !players.find(p => p.id === myPresenceId)) {
+        alert('Room is full (Max 2 players).');
+        supabase.removeChannel(targetChannel);
+        if (targetChannel === channel) channel = null;
+        init();
+        return;
+      }
+
+      // Admin checks for game progress triggers
+      if (isAdmin && !isAdvancingRound) {
+        const allSubmitted = players.every(p => p.submitted);
+        const allProcessed = players.every(p => p.processedResult);
+        const allOnSameRound = players.every(p => p.currentRound === currentRound);
+        
+        if ((gameStatus === 'shopping' || gameStatus === 'waiting') && allSubmitted && players.length >= 2) {
+          console.log('Sync check: All submitted via presence');
+          checkAndMatchPlayers();
+        } else if ((gameStatus === 'battling' || gameStatus === 'waiting') && allProcessed && allOnSameRound && players.length >= 2) {
+          console.log('Sync check: All results processed via presence');
+          checkRoundCompletion();
+        }
+      }
+
+      updateLobbyUIFromPresence();
+    })
+    .on('broadcast', { event: 'round_start' }, (envelope) => {
+      if (targetChannel !== channel) return;
+      const data = envelope.payload;
+      console.log('Received round_start broadcast:', data);
+      handleRoundStart(data.round, data.maxRounds);
+    })
+    .on('broadcast', { event: 'submit_grid' }, (envelope) => {
+      if (targetChannel !== channel) return;
+      const data = envelope.payload;
+      console.log('Player submitted grid:', data.id);
+      if (isAdmin) {
+        adminSubmissions[data.id] = { items: data.items, grid: data.grid };
+        
+        if (presenceState[data.id] && presenceState[data.id][0]) {
+            presenceState[data.id][0].submitted = true;
+        }
+
+        console.log('Admin checking matches after broadcast...');
+        setTimeout(() => checkAndMatchPlayers(), 500);
+      }
+    })
+    .on('broadcast', { event: 'battle_start' }, (envelope) => {
+      if (targetChannel !== channel) return;
+      const data = envelope.payload;
+      if (data.targetId === myPresenceId) {
+        console.log('Battle start received for me!');
+        handleBattleStart(data);
+      }
+    })
+    .on('broadcast', { event: 'battle_bye' }, (envelope) => {
+      if (targetChannel !== channel) return;
+      const data = envelope.payload;
+      if (data.targetId === myPresenceId) {
+        handleBattleBye(data.message);
+      }
+    })
+    .on('broadcast', { event: 'processed_result' }, (envelope) => {
+      if (targetChannel !== channel) return;
+      const data = envelope.payload;
+      console.log('Player processed result:', data.id);
+      if (isAdmin && data.round === currentRound) {
+        adminProcessed[data.id] = true;
+        
+        if (presenceState[data.id] && presenceState[data.id][0]) {
+            presenceState[data.id][0].processedResult = true;
+        }
+
+        console.log('Admin checking round completion after broadcast...');
+        setTimeout(() => checkRoundCompletion(), 500);
+      }
+    })
+    .on('broadcast', { event: 'tournament_results' }, (envelope) => {
+      if (targetChannel !== channel) return;
+      const data = envelope.payload;
+      gameStatus = 'results';
+      showLeaderboard(data.leaderboard);
+    })
+    .on('broadcast', { event: 'kick' }, (envelope) => {
+      if (targetChannel !== channel) return;
+      const data = envelope.payload;
+      if (data.targetId === myPresenceId) {
+        alert(data.message || 'You have been kicked from the room.');
+        backToStartMenu(true);
+      }
+    });
+}
+
+function createRoomChannel(roomId, preservePresenceId = false) {
+  if (!preservePresenceId || !myPresenceId) {
+    myPresenceId = Math.random().toString(36).substring(7);
+  }
+
+  const nextChannel = supabase.channel(`room:${roomId}`, {
+    config: { presence: { key: myPresenceId } }
+  });
+
+  attachChannelListeners(nextChannel);
+  nextChannel.subscribe((status, err) => handleChannelStatus(status, err, nextChannel));
+  channel = nextChannel;
+}
+
+function reconnectRoomChannel() {
+  if (!currentRoomId || isLeavingRoom || isAIGame || reconnectInProgress) return;
+  reconnectInProgress = true;
+
+  const oldChannel = channel;
+  channel = null;
+  if (oldChannel) {
+    supabase.removeChannel(oldChannel);
+  }
+
+  createRoomChannel(currentRoomId, true);
+}
 
 const SUPABASE_URL = 'https://svjwcroknmzdkkjxclww.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2andjcm9rbm16ZGtranhjbHd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2NTI4ODgsImV4cCI6MjA4ODIyODg4OH0.P6E46tZ2oGUCHu7lE7BuzCbbNyuTOnIiRtMIM50L_OY';
@@ -105,6 +373,13 @@ function init() {
   tournamentScores = { player: 0, rival: 0, record: { w: 0, d: 0, l: 0 } };
   isAdmin = false;
   isAdvancingRound = false;
+  matchedRound = null;
+  activeBattleRound = null;
+  reportedResultRound = null;
+  isLeavingRoom = false;
+  reconnectInProgress = false;
+  reconnectAttempt = 0;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (lobbyTimer) { clearTimeout(lobbyTimer); lobbyTimer = null; }
   
   // UI Reset — hide login/header until intro finishes
@@ -311,110 +586,17 @@ function hideOverlay() {
 //  MULTIPLAYER LOGIC (Supabase Realtime)
 // ═══════════════════════════════════════════════════════
 async function initMultiplayer(roomId) {
+  isLeavingRoom = false;
+  reconnectInProgress = false;
+  reconnectAttempt = 0;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+
   if (channel) {
-    supabase.removeChannel(channel);
+    const oldChannel = channel;
+    channel = null;
+    supabase.removeChannel(oldChannel);
   }
-
-  myPresenceId = Math.random().toString(36).substring(7);
-  channel = supabase.channel(`room:${roomId}`, {
-    config: { presence: { key: myPresenceId } }
-  });
-
-  channel
-    .on('presence', { event: 'sync' }, () => {
-      presenceState = channel.presenceState();
-      
-      const players = [];
-      for (const key in presenceState) {
-        players.push(presenceState[key][0]);
-      }
-      
-      // Limit room size to 2
-      if (players.length > 2 && !players.find(p => p.id === myPresenceId)) {
-        alert('Room is full (Max 2 players).');
-        supabase.removeChannel(channel);
-        channel = null;
-        init();
-        return;
-      }
-
-      // Admin checks for game progress triggers
-      if (isAdmin && !isAdvancingRound) {
-        const allSubmitted = players.every(p => p.submitted);
-        const allProcessed = players.every(p => p.processedResult);
-        const allOnSameRound = players.every(p => p.currentRound === currentRound);
-        
-        if ((gameStatus === 'shopping' || gameStatus === 'waiting') && allSubmitted && players.length >= 2) {
-          console.log('Sync check: All submitted via presence');
-          checkAndMatchPlayers();
-        } else if (gameStatus === 'battling' && allProcessed && allOnSameRound && players.length >= 2) {
-          console.log('Sync check: All results processed via presence');
-          checkRoundCompletion();
-        }
-      }
-
-      updateLobbyUIFromPresence();
-    })
-    .on('broadcast', { event: 'round_start' }, (envelope) => {
-      const data = envelope.payload;
-      console.log('Received round_start broadcast:', data);
-      handleRoundStart(data.round, data.maxRounds);
-    })
-    .on('broadcast', { event: 'submit_grid' }, (envelope) => {
-      const data = envelope.payload;
-      console.log('Player submitted grid:', data.id);
-      // Logic for admin to match players
-      if (isAdmin) {
-        console.log('Admin checking matches after broadcast...');
-        setTimeout(() => checkAndMatchPlayers(), 500);
-      }
-    })
-    .on('broadcast', { event: 'battle_start' }, (envelope) => {
-      const data = envelope.payload;
-      if (data.targetId === myPresenceId) {
-        console.log('Battle start received for me!');
-        handleBattleStart(data);
-      }
-    })
-    .on('broadcast', { event: 'battle_bye' }, (envelope) => {
-      const data = envelope.payload;
-      if (data.targetId === myPresenceId) {
-        handleBattleBye(data.message);
-      }
-    })
-    .on('broadcast', { event: 'tournament_results' }, (envelope) => {
-      const data = envelope.payload;
-      gameStatus = 'results';
-      showLeaderboard(data.leaderboard);
-    })
-    .on('broadcast', { event: 'kick' }, (envelope) => {
-      const data = envelope.payload;
-      if (data.targetId === myPresenceId) {
-        alert(data.message || 'You have been kicked from the room.');
-        backToStartMenu(true);
-      }
-    })
-    .subscribe(async (status, err) => {
-      console.log('Supabase Channel Status:', status);
-      if (err) console.error('Subscription Error:', err);
-      
-      if (status === 'SUBSCRIBED') {
-        console.log('Joined channel successfully');
-        await channel.track({
-          id: myPresenceId,
-          name: playerName,
-          joinedAt: new Date().toISOString(),
-          score: 0,
-          record: { w: 0, d: 0, l: 0 },
-          submitted: null,
-          processedResult: false
-        });
-        gameStatus = 'lobby';
-        switchPhase('lobby');
-      } else if (status === 'CHANNEL_ERROR') {
-        alert('Could not join room. Realtime might be disabled in Supabase project.');
-      }
-    });
+  createRoomChannel(roomId, false);
 }
 
 function updateLobbyUIFromPresence() {
@@ -469,11 +651,7 @@ window.kickPlayer = function(targetId) {
   }
   
   if (isAdmin && channel) {
-    channel.send({
-      type: 'broadcast',
-      event: 'kick',
-      payload: { targetId, message: 'The Admin kicked you from the room.' }
-    });
+    sendBroadcast('kick', { targetId, message: 'The Admin kicked you from the room.' });
   }
 };
 
@@ -486,14 +664,27 @@ async function handleRoundStart(round, maxRounds) {
   
   gameStatus = 'shopping';
   currentRound = r;
+  isAdvancingRound = false;
+  matchedRound = null;
+  activeBattleRound = null;
+  reportedResultRound = null;
+  
+  if (isAdmin) {
+    adminSubmissions = {};
+    adminProcessed = {};
+  }
   
   // Reset presence status for the new round
   if (channel && myPresenceId && presenceState[myPresenceId]) {
-    const myState = presenceState[myPresenceId][0];
-    myState.submitted = null;
+    const myState = getMyPresenceState();
+    myState.submitted = false;
     myState.processedResult = false;
     myState.currentRound = r; // Track current round in presence
-    await channel.track(myState);
+    
+    // Give presence a tiny delay to flush previous state updates
+    setTimeout(async () => {
+      await safeTrackPresence(myState, 'round start');
+    }, 100);
   }
 
   const display = document.getElementById('round-display');
@@ -507,6 +698,9 @@ async function handleRoundStart(round, maxRounds) {
 }
 
 function handleBattleStart(data) {
+  if (activeBattleRound === currentRound) return;
+
+  activeBattleRound = currentRound;
   gameStatus = 'battling';
   hideOverlay();
   switchPhase('battle');
@@ -519,6 +713,9 @@ function handleBattleStart(data) {
 }
 
 async function reportBattleResult(result) {
+  if (reportedResultRound === currentRound) return;
+
+  reportedResultRound = currentRound;
   console.log('Reporting battle result:', result);
   
   if (isAIGame) {
@@ -527,7 +724,7 @@ async function reportBattleResult(result) {
   }
 
   // Multiplayer logic
-  const myState = presenceState[myPresenceId][0];
+  const myState = getMyPresenceState();
   if (result === 'win') {
     myState.score += 3;
     myState.record.w++;
@@ -550,24 +747,34 @@ async function reportBattleResult(result) {
   }
   
   console.log('Updating presence with score:', myState.score);
-  await channel.track(myState);
+  await safeTrackPresence(myState, 'battle result');
+  
+  // Broadcast that we processed our result
+  await sendBroadcast('processed_result', { id: myPresenceId, round: currentRound });
 
   // Show a message to wait for other players
   setTimeout(() => {
     // Only show if we are still in the same round and haven't moved to next phase
     if (gameStatus === 'battling' && currentRound === myState.currentRound) {
+      gameStatus = 'waiting';
       showOverlay('Round Finished', 'Waiting for your rival to finish their battle...');
     }
   }, 1500); 
   
-  if (isAdmin) {
-    // Admin checks if all results are in
-    console.log('Admin reported result, checking round completion...');
+  // Check locally after a short delay to ensure presence state syncs
+  setTimeout(() => {
+    if (isAdmin) {
+      adminProcessed[myPresenceId] = true;
+      console.log('Admin reported result, checking round completion locally...');
+    }
     checkRoundCompletion();
-  }
+  }, 500);
 }
 
 function handleBattleBye(message) {
+  if (activeBattleRound === currentRound) return;
+
+  activeBattleRound = currentRound;
   showOverlay('Bye Round', message);
   // Auto-win for bye
   reportBattleResult('win');
@@ -577,16 +784,32 @@ function handleBattleBye(message) {
 //  ADMIN COORDINATION LOGIC
 // ═══════════════════════════════════════════════════════
 async function checkAndMatchPlayers() {
-  if (!isAdmin || gameStatus === 'battling') return; // Prevent double trigger
+  if (!isAdmin || gameStatus === 'battling' || matchedRound === currentRound) return;
   
+  // Give presence state a moment to fully sync if needed, though we track directly via myState too
   const players = [];
   for (const key in presenceState) {
-    players.push(presenceState[key][0]);
+    // Clone the object so we can mutate the submitted flag safely for this check
+    players.push({ ...presenceState[key][0] });
   }
+  
+  // Ensure we count ourselves as submitted if we just submitted
+  const me = players.find(p => p.id === myPresenceId);
+  if (me && adminSubmissions[myPresenceId]) {
+      me.submitted = true;
+  }
+  
+  // Also cross-reference with adminSubmissions directly as the ultimate source of truth for the admin
+  players.forEach(p => {
+      if (adminSubmissions[p.id]) {
+          p.submitted = true;
+      }
+  });
   
   console.log('Checking for matches. Players submitted:', players.filter(p => p.submitted).length, '/', players.length);
   const allSubmitted = players.every(p => p.submitted);
   if (allSubmitted && players.length >= 2) {
+    matchedRound = currentRound;
     console.log('All players submitted, generating matches...');
     const shuffled = [...players].sort(() => Math.random() - 0.5);
     for (let i = 0; i < shuffled.length; i += 2) {
@@ -594,12 +817,15 @@ async function checkAndMatchPlayers() {
         const p1 = shuffled[i];
         const p2 = shuffled[i+1];
         
-        const b1 = { targetId: p1.id, enemyName: p2.name, enemyItems: p2.submitted.items, enemyGrid: p2.submitted.grid };
-        const b2 = { targetId: p2.id, enemyName: p1.name, enemyItems: p1.submitted.items, enemyGrid: p1.submitted.grid };
+        const p1Data = adminSubmissions[p1.id] || { items: [], grid: [] };
+        const p2Data = adminSubmissions[p2.id] || { items: [], grid: [] };
+
+        const b1 = { targetId: p1.id, enemyName: p2.name, enemyItems: p2Data.items, enemyGrid: p2Data.grid };
+        const b2 = { targetId: p2.id, enemyName: p1.name, enemyItems: p1Data.items, enemyGrid: p1Data.grid };
 
         console.log(`Matching ${p1.name} vs ${p2.name}`);
-        channel.send({ type: 'broadcast', event: 'battle_start', payload: b1 });
-        channel.send({ type: 'broadcast', event: 'battle_start', payload: b2 });
+        await sendBroadcast('battle_start', b1);
+        await sendBroadcast('battle_start', b2);
 
         // Trigger locally for admin if admin is one of the players
         if (p1.id === myPresenceId) handleBattleStart(b1);
@@ -608,7 +834,7 @@ async function checkAndMatchPlayers() {
         // Bye
         const byePayload = { targetId: shuffled[i].id, message: "No opponent this round. You get a bye!" };
         console.log(`Bye for ${shuffled[i].name}`);
-        channel.send({ type: 'broadcast', event: 'battle_bye', payload: byePayload });
+        await sendBroadcast('battle_bye', byePayload);
         if (shuffled[i].id === myPresenceId) handleBattleBye(byePayload.message);
       }
     }
@@ -620,14 +846,40 @@ async function checkRoundCompletion() {
   
   const players = [];
   for (const key in presenceState) {
-    players.push(presenceState[key][0]);
+    players.push({ ...presenceState[key][0] });
   }
+  
+  // Ensure we count ourselves as processed if we just processed
+  const me = players.find(p => p.id === myPresenceId);
+  if (me && adminProcessed[myPresenceId]) {
+     me.processedResult = true;
+  }
+  
+  // Cross-reference with adminProcessed directly as the ultimate source of truth
+  players.forEach(p => {
+      if (adminProcessed[p.id]) {
+          p.processedResult = true;
+      }
+  });
   
   console.log('Checking round completion. Players processed:', players.filter(p => p.processedResult).length, '/', players.length);
   const allProcessed = players.every(p => p.processedResult);
   const allOnSameRound = players.every(p => p.currentRound === currentRound);
+  const roundReady = players.every(p => p.currentRound === currentRound || adminProcessed[p.id]);
 
-  if (allProcessed && allOnSameRound && players.length >= 2) {
+  if (allProcessed && !roundReady) {
+    console.warn(
+      'Round completion blocked by stale round state:',
+      players.map(p => ({
+        id: p.id,
+        currentRound: p.currentRound,
+        processedResult: p.processedResult,
+        processedByAdmin: !!adminProcessed[p.id]
+      }))
+    );
+  }
+
+  if (allProcessed && roundReady && players.length >= 2) {
     isAdvancingRound = true; // Lock to prevent multiple triggers
     
     if (currentRound >= 5) {
@@ -638,7 +890,7 @@ async function checkRoundCompletion() {
       })).sort((a, b) => b.score - a.score);
       
       console.log('Tournament over, sending results:', leaderboard);
-      channel.send({ type: 'broadcast', event: 'tournament_results', payload: { leaderboard } });
+      await sendBroadcast('tournament_results', { leaderboard });
       
       // Trigger locally for admin
       gameStatus = 'results';
@@ -656,9 +908,9 @@ async function checkRoundCompletion() {
       console.log('All players done with battle, moving to next round...');
       const nextR = currentRound + 1;
       const payload = { round: nextR, maxRounds: 5 };
-      channel.send({ type: 'broadcast', event: 'round_start', payload: payload });
+      await sendBroadcast('round_start', payload);
       // Trigger locally for admin
-      await handleRoundStart(nextR, 5);
+      handleRoundStart(nextR, 5);
       
       // Release lock after a short delay to allow presence to sync the new round state
       setTimeout(() => { isAdvancingRound = false; }, 2000);
@@ -782,15 +1034,11 @@ window.startAIGame = function() {
   resetForNewRound();
 };
 
-window.requestStartGame = function() {
+window.requestStartGame = async function() {
   if (isAdmin && channel) {
     const payload = { round: 1, maxRounds: 5 };
     // Broadcast to others
-    channel.send({
-      type: 'broadcast',
-      event: 'round_start',
-      payload: payload
-    });
+    await sendBroadcast('round_start', payload);
     // Trigger locally for the admin
     handleRoundStart(payload.round, payload.maxRounds);
   }
@@ -807,10 +1055,17 @@ window.backToLobby = function() {
 
 window.backToStartMenu = function(force = false) {
   if (force || confirm('Are you sure you want to leave the current game?')) {
+    isLeavingRoom = true;
+    reconnectInProgress = false;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (channel) {
       supabase.removeChannel(channel);
       channel = null;
     }
+    currentRoomId = null;
     init();
   }
 };
@@ -1505,25 +1760,24 @@ window.startBattle = async function() {
     gameStatus = 'waiting';
     showOverlay('Waiting...', 'Sending your box to the rival...');
     
-    // Update our presence state with the submitted items
-    const myState = presenceState[myPresenceId][0];
-    myState.submitted = { items: placedItems, grid: playerGrid };
+    // Update our presence state with the submitted flag
+    const myState = getMyPresenceState();
+    myState.submitted = true;
     
     console.log('Submitting grid, updating presence...');
-    await channel.track(myState);
+    await safeTrackPresence(myState, 'battle submit');
     
     // Tell the channel we submitted
-    channel.send({
-      type: 'broadcast',
-      event: 'submit_grid',
-      payload: { id: myPresenceId }
-    });
+    await sendBroadcast('submit_grid', { id: myPresenceId, items: placedItems, grid: playerGrid });
     
-    // Admin needs to check locally because broadcast doesn't self-receive
-    if (isAdmin) {
-      console.log('Admin submitted, checking for matches locally...');
-      setTimeout(() => checkAndMatchPlayers(), 500); // Small delay to ensure presence sync
-    }
+    // Check locally after a short delay to ensure presence state syncs
+    setTimeout(() => {
+      if (isAdmin) {
+        adminSubmissions[myPresenceId] = { items: placedItems, grid: playerGrid };
+        console.log('Admin submitted, checking for matches locally...');
+      }
+      checkAndMatchPlayers(); 
+    }, 500);
   }
 };
 
