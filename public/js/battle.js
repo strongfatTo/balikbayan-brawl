@@ -183,6 +183,10 @@ function runAnimatedBattle(playerUnits, enemyUnits, onComplete) {
     stage.appendChild(pSprite);
     stage.appendChild(eSprite);
 
+    // Keep HP bars in sync for units that survive into the next round.
+    updateSpriteHp(pSprite, pa[0]);
+    updateSpriteHp(eSprite, ea[0]);
+
     updateTeamListUI(playerUnits, enemyUnits);
   }
 

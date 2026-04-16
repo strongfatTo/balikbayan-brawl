@@ -582,6 +582,12 @@ function hideOverlay() {
   document.getElementById('result-overlay').classList.remove('show');
 }
 
+function hideItemPopover() {
+  const popover = document.getElementById('item-popover');
+  if (!popover) return;
+  popover.classList.remove('show');
+}
+
 // ═══════════════════════════════════════════════════════
 //  MULTIPLAYER LOGIC (Supabase Realtime)
 // ═══════════════════════════════════════════════════════
@@ -919,6 +925,9 @@ async function checkRoundCompletion() {
 }
 
 function switchPhase(phase) {
+  // Always hide shop popover when leaving/entering phases to avoid UI leaking into battle.
+  hideItemPopover();
+
   document.getElementById('login-phase').style.display = phase === 'login' ? 'flex' : 'none';
   document.getElementById('lobby-phase').style.display = phase === 'lobby' ? 'flex' : 'none';
   document.getElementById('shop-phase').style.display = phase === 'shopping' ? 'grid' : 'none';
