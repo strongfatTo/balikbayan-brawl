@@ -50,12 +50,25 @@ Two players (or you vs. AI) each have **$10** and a **5x5 grid** (25 cells) to f
 
 | Item | Emoji | Price | HP | ATK | Special Mechanic |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| **Toothpaste** | 🦷 | $1 | 8 | 6 | +5 ATK if **Shampoo** is also in the box. |
+| **Toothpaste** | 🦷 | $0.5 | 8 | 6 | +5 ATK if **Shampoo** is also in the box. |
 | **Running Shoes** | 👟 | $1 | 12 | 10 | Pure filler, no special effects. |
 | **Shampoo** | 🧴 | $1 | 20 | 8 | Synergy core for Toothpaste. |
 | **Luncheon Meat** | 🥩 | $2 | 60 | 15 | **30% HP Penalty** if not placed in Bottom Section (Rows 4-5). |
 | **Jeans** | 👖 | $2 | 45 | 8 | **+20 Shield** if **Running Shoes** are also in the box. |
 | **Chocolate** | 🍫 | $3 | 25 | 40 | **50% ATK Penalty** if not placed in Top Section (Rows 1-2). |
+| **Bread** | 🍞 | $2 | 18 | 12 | **2x ATK** only if placed as your fight position **#1**. |
+| **Bleach** | 🧹 | $1.5 | 1 | 999 | Glass cannon: one-hit kill damage, but extremely fragile. |
+| **Pan** | 🍳 | $2 | 30 | 24 | **3x ATK**, but takes **3x damage** from **Shoes/Jeans**. |
+| **Pill Box** | 💊 | $2 | 20 | 10 | Heals **30% max HP** after it kills an enemy. |
+| **Alcohol** | 🍺 | $5 | 100 | 50 | Premium **3x3** powerhouse unit with raw stats. |
+
+### 🆕 New Characters Added
+
+- **Bread (🍞)**: position-based burst if set to fight first.
+- **Bleach (🧹)**: ultra-high ATK glass cannon.
+- **Pan (🍳)**: high DPS carry with matchup weakness.
+- **Pill Box (💊)**: sustain unit with on-kill healing.
+- **Alcohol (🍺)**: expensive 3x3 late-round stat monster.
 
 ## ☁️ Deployment
 
