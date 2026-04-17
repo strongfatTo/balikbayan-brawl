@@ -44,6 +44,16 @@ let isLeavingRoom = false;
 let reconnectTimer = null;
 let reconnectAttempt = 0;
 let reconnectInProgress = false;
+let lastAIBuildSignature = '';
+let tutorialMode = false;
+let tutorialActive = false;
+let tutorialStepIndex = 0;
+let tutorialLastFocus = null;
+let opLog = [];
+
+const GUIDE_KEY = 'bb_seen_guide_v1';
+const HUMAN_AI_STORAGE_KEY = 'bb_human_builds_cache_v1';
+const HUMAN_AI_TABLE = 'ai_human_builds';
 
 async function sendBroadcast(event, payload, attempts = 2, delayMs = 250) {
   if (!channel) return;
@@ -379,6 +389,11 @@ function init() {
   isLeavingRoom = false;
   reconnectInProgress = false;
   reconnectAttempt = 0;
+  tutorialActive = false;
+  tutorialMode = false;
+  tutorialStepIndex = 0;
+  tutorialLastFocus = null;
+  opLog = [];
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (lobbyTimer) { clearTimeout(lobbyTimer); lobbyTimer = null; }
   
@@ -395,6 +410,8 @@ function init() {
   document.getElementById('battle-phase').style.display = 'none';
   document.getElementById('leaderboard-overlay').classList.remove('show');
   document.getElementById('result-overlay').classList.remove('show');
+  document.getElementById('tutorial-overlay').style.display = 'none';
+  document.body.classList.remove('tutorial-active');
 
   // Reset grid background state
   resetGridBackground();
@@ -412,6 +429,436 @@ function init() {
   }
 }
 
+function recordOperation(type, payload = {}) {
+  opLog.push({
+    type,
+    payload,
+    at: new Date().toISOString(),
+    round: currentRound
+  });
+
+  if (opLog.length > 300) {
+    opLog = opLog.slice(opLog.length - 300);
+  }
+}
+
+function cloneCells(cells = []) {
+  return cells.map(c => ({ x: c.x, y: c.y }));
+}
+
+function serializePlacedItems(items) {
+  return items.map((pi, idx) => ({
+    order: idx + 1,
+    itemId: pi.item.id,
+    shapeIdx: pi.shapeIdx || 0,
+    cells: cloneCells(pi.cells)
+  }));
+}
+
+function buildFromSerializedItems(serializedItems = []) {
+  const aiGrid = Array.from({length: GRID_H}, () => Array(GRID_W).fill(null));
+  const aiPlacedItems = [];
+
+  for (const s of serializedItems) {
+    const item = ITEMS.find(i => i.id === s.itemId);
+    if (!item) continue;
+    const cells = cloneCells(s.cells || []);
+    if (cells.length === 0) continue;
+
+    const valid = cells.every(c =>
+      c.x >= 0 && c.x < GRID_W && c.y >= 0 && c.y < GRID_H && !aiGrid[c.y][c.x]
+    );
+    if (!valid) continue;
+
+    const placed = {
+      item,
+      cells,
+      shapeIdx: s.shapeIdx || 0,
+      placedId: aiPlacedItems.length + 1
+    };
+    aiPlacedItems.push(placed);
+    cells.forEach(c => { aiGrid[c.y][c.x] = placed; });
+  }
+
+  return { items: aiPlacedItems, grid: aiGrid };
+}
+
+function getCachedHumanBuilds() {
+  try {
+    const raw = localStorage.getItem(HUMAN_AI_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCachedHumanBuild(build) {
+  const cached = getCachedHumanBuilds();
+  cached.unshift(build);
+  localStorage.setItem(HUMAN_AI_STORAGE_KEY, JSON.stringify(cached.slice(0, 120)));
+}
+
+async function persistHumanBuild(resultTag, modeTag) {
+  if (!placedItems.length) return;
+
+  const buildData = {
+    playerName: playerName || 'Anonymous',
+    mode: modeTag,
+    round: currentRound,
+    result: resultTag,
+    budgetRemaining: Number(budget.toFixed(2)),
+    items: serializePlacedItems(placedItems),
+    operations: opLog.slice(-80)
+  };
+
+  saveCachedHumanBuild(buildData);
+
+  if (!supabase) return;
+
+  try {
+    const { error } = await supabase.from(HUMAN_AI_TABLE).insert({
+      player_name: buildData.playerName,
+      mode_tag: buildData.mode,
+      result_tag: buildData.result,
+      round_num: buildData.round,
+      build_data: buildData
+    });
+
+    if (error) {
+      console.warn('Human AI DB insert skipped:', error.message);
+    }
+  } catch (err) {
+    console.warn('Human AI DB unavailable, using local cache only.', err);
+  }
+}
+
+async function fetchHumanBuildsForAI() {
+  const cached = getCachedHumanBuilds();
+  if (!supabase) return cached;
+
+  try {
+    const { data, error } = await supabase
+      .from(HUMAN_AI_TABLE)
+      .select('build_data, result_tag, mode_tag, created_at')
+      .order('created_at', { ascending: false })
+      .limit(80);
+
+    if (error) {
+      console.warn('Human AI DB read skipped:', error.message);
+      return cached;
+    }
+
+    const normalized = (data || []).map(row => row.build_data).filter(Boolean);
+    return [...normalized, ...cached].slice(0, 120);
+  } catch (err) {
+    console.warn('Human AI DB read failed, fallback to local cache.', err);
+    return cached;
+  }
+}
+
+function pickHumanStyleBuild(builds) {
+  if (!builds.length) return null;
+
+  const scored = builds
+    .filter(b => Array.isArray(b.items) && b.items.length > 0)
+    .map(b => {
+      const resultScore = b.result === 'win' ? 3 : b.result === 'draw' ? 2 : 1;
+      const itemScore = Math.min(4, b.items.length * 0.4);
+      const roundScore = Math.min(2, (b.round || 1) * 0.25);
+      return { build: b, score: resultScore + itemScore + roundScore + Math.random() };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  if (!scored.length) return null;
+  const topPool = scored.slice(0, Math.min(12, scored.length));
+  return topPool[Math.floor(Math.random() * topPool.length)].build;
+}
+
+function getBuildSignature(build) {
+  if (!build || !Array.isArray(build.items)) return 'empty';
+  return build.items
+    .map(item => `${item.itemId}:${(item.cells || []).map(c => `${c.x},${c.y}`).join('|')}`)
+    .join(';');
+}
+
+function placeItemOnAIGrid(aiGrid, aiPlacedItems, aiState, itemId, gx, gy, shapeIdx = 0) {
+  const item = ITEMS.find(i => i.id === itemId);
+  if (!item) return false;
+  if (item.price > aiState.budget) return false;
+
+  const actualShapeIdx = shapeIdx % item.shapes.length;
+  const shape = item.shapes[actualShapeIdx];
+  const cells = shape.map(([dx, dy]) => ({ x: gx + dx, y: gy + dy }));
+  const valid = cells.every(c => c.x >= 0 && c.x < GRID_W && c.y >= 0 && c.y < GRID_H && !aiGrid[c.y][c.x]);
+  if (!valid) return false;
+
+  const placed = { item, cells, shapeIdx: actualShapeIdx, placedId: aiPlacedItems.length + 1 };
+  aiPlacedItems.push(placed);
+  cells.forEach(c => { aiGrid[c.y][c.x] = placed; });
+  aiState.budget -= item.price;
+  return true;
+}
+
+function generateArchetypeAIGrid() {
+  const styleLibrary = {
+    burst: [
+      ['bread', 0, 4, 1],
+      ['chocolate', 3, 3, 1],
+      ['bleach', 2, 2, 0],
+      ['toothpaste', 4, 0, 0],
+      ['shampoo', 0, 1, 1],
+      ['shoes', 2, 0, 0]
+    ],
+    sustain: [
+      ['pillbox', 1, 3, 0],
+      ['spam', 0, 0, 0],
+      ['jeans', 2, 0, 0],
+      ['shoes', 0, 3, 1],
+      ['shampoo', 4, 1, 1],
+      ['toothpaste', 4, 4, 0],
+      ['bleach', 3, 3, 0]
+    ],
+    premium: [
+      ['alcohol', 1, 1, 0],
+      ['pan', 0, 0, 0],
+      ['bread', 4, 4, 0],
+      ['shoes', 3, 0, 1],
+      ['toothpaste', 0, 4, 0],
+      ['shampoo', 0, 2, 1]
+    ]
+  };
+
+  const styleNames = Object.keys(styleLibrary);
+  const pickedStyle = styleNames[Math.floor(Math.random() * styleNames.length)];
+  const aiGrid = Array.from({length: GRID_H}, () => Array(GRID_W).fill(null));
+  const aiPlacedItems = [];
+  const aiState = { budget: STARTING_BUDGET };
+
+  styleLibrary[pickedStyle].forEach(([id, gx, gy, shapeIdx]) => {
+    placeItemOnAIGrid(aiGrid, aiPlacedItems, aiState, id, gx, gy, shapeIdx);
+  });
+
+  if (!aiPlacedItems.length) return null;
+  return { items: aiPlacedItems, grid: aiGrid, style: pickedStyle };
+}
+
+function getItemGuideDefinition(item, bonusText = '') {
+  const blank = ['','','','','','','','',''];
+
+  const defs = {
+    toothpaste: {
+      title: 'Synergy Setup',
+      subtitle: bonusText || 'Pair with Shampoo for +5 ATK.',
+      cells: ['S','','','',item.emoji,'','','',''],
+      marks: { S: 'good' }
+    },
+    shampoo: {
+      title: 'Synergy Core',
+      subtitle: bonusText || 'Enable Toothpaste bonus.',
+      cells: ['T','','','',item.emoji,'','','',''],
+      marks: { T: 'good' }
+    },
+    spam: {
+      title: 'Placement Zone',
+      subtitle: bonusText || 'Keep in bottom rows (4-5).',
+      cells: ['','','','','','','B','B','B'],
+      marks: { B: 'good' }
+    },
+    chocolate: {
+      title: 'Placement Zone',
+      subtitle: bonusText || 'Keep in top rows (1-2).',
+      cells: ['T','T','T','','','','','',''],
+      marks: { T: 'good' }
+    },
+    bread: {
+      title: 'Order Priority',
+      subtitle: bonusText || 'Put Bread in position #1.',
+      cells: ['#1','','','','🍞','','','',''],
+      marks: { '#1': 'good' }
+    },
+    bleach: {
+      title: 'Glass Cannon',
+      subtitle: bonusText || 'Huge ATK, very fragile HP.',
+      cells: ['','','','','⚠','','','',''],
+      marks: { '⚠': 'warn' }
+    },
+    pan: {
+      title: 'Matchup Alert',
+      subtitle: bonusText || 'Strong damage but weak vs Shoes/Jeans.',
+      cells: ['👟','','👖','','🍳','','','',''],
+      marks: { '👟': 'warn', '👖': 'warn' }
+    },
+    pillbox: {
+      title: 'Sustain Pattern',
+      subtitle: bonusText || 'Kills restore 30% max HP.',
+      cells: ['','+','','+','💊','+','','+',''],
+      marks: { '+': 'good' }
+    },
+    alcohol: {
+      title: 'Space Control',
+      subtitle: bonusText || 'Large 3x3 premium unit.',
+      cells: ['X','X','X','X','X','X','X','X','X'],
+      marks: { X: 'good' }
+    },
+    jeans: {
+      title: 'Synergy Setup',
+      subtitle: bonusText || 'Pair with Running Shoes for shield.',
+      cells: ['👟','','','','👖','','','',''],
+      marks: { '👟': 'good' }
+    },
+    shoes: {
+      title: 'Flexible Unit',
+      subtitle: bonusText || 'Great cheap filler and Jeans partner.',
+      cells: blank,
+      marks: {}
+    }
+  };
+
+  return defs[item.id] || {
+    title: 'Placement Hint',
+    subtitle: bonusText || item.desc || 'No special setup needed.',
+    cells: blank,
+    marks: {}
+  };
+}
+
+function renderItemPopover(item, bonusText = '', isActive = false) {
+  const popover = document.getElementById('item-popover');
+  const def = getItemGuideDefinition(item, bonusText || item.desc || '');
+  const guideCells = def.cells.map(symbol => {
+    const level = def.marks[symbol] || 'neutral';
+    return `<div class="guide-cell ${level}">${symbol || ''}</div>`;
+  }).join('');
+
+  popover.innerHTML = `
+    <div class="popover-title">${item.emoji} ${item.name}</div>
+    <div class="popover-desc">${def.subtitle}</div>
+    <div class="guide-3x3">${guideCells}</div>
+    <div class="guide-caption">${def.title}${isActive ? ' - Active' : ''}</div>
+  `;
+}
+
+const tutorialSteps = [
+  {
+    title: 'Guide Start',
+    text: 'Welcome! This guide will teach one full flow: pick, rotate, place, and fight.',
+    target: '.selection-tip',
+    validate: () => true
+  },
+  {
+    title: 'Pick An Item',
+    text: 'Click any item card in the shop list to select it.',
+    target: '#shop-list',
+    validate: () => !!selectedItem
+  },
+  {
+    title: 'Rotate Shape',
+    text: 'Press R or click the R button on selected item to rotate it.',
+    target: '#shop-list .item-card.selected',
+    validate: () => opLog.some(log => log.type === 'rotate_item')
+  },
+  {
+    title: 'Place On Grid',
+    text: 'Now click the grid to place your selected item.',
+    target: '.grid-bg-wrapper',
+    validate: () => placedItems.length > 0
+  },
+  {
+    title: 'Read Rules',
+    text: 'Check Item Rules. They explain top/bottom zones and synergies.',
+    target: '#rules-list',
+    validate: () => true
+  },
+  {
+    title: 'Fight',
+    text: 'Press FIGHT to start combat. Tutorial ends after battle starts.',
+    target: '#btn-fight',
+    validate: () => false,
+    finalAction: 'start_battle'
+  }
+];
+
+function clearTutorialFocus() {
+  if (tutorialLastFocus) tutorialLastFocus.classList.remove('tutorial-focus');
+  tutorialLastFocus = null;
+}
+
+function setTutorialFocus(selector) {
+  clearTutorialFocus();
+  if (!selector) return;
+
+  const el = document.querySelector(selector);
+  if (!el) return;
+
+  el.classList.add('tutorial-focus');
+  tutorialLastFocus = el;
+
+  const arrow = document.getElementById('tutorial-arrow');
+  const rect = el.getBoundingClientRect();
+  arrow.style.left = `${Math.max(12, rect.left - 38)}px`;
+  arrow.style.top = `${Math.max(16, rect.top + rect.height / 2 - 16)}px`;
+}
+
+function renderTutorialStep() {
+  const step = tutorialSteps[tutorialStepIndex];
+  if (!step) return;
+
+  document.getElementById('tutorial-title').textContent = step.title;
+  document.getElementById('tutorial-text').textContent = step.text;
+  document.getElementById('tutorial-next-btn').style.display = step.finalAction ? 'none' : 'inline-flex';
+  setTutorialFocus(step.target);
+}
+
+function startTutorialFlow() {
+  tutorialActive = true;
+  tutorialStepIndex = 0;
+  document.body.classList.add('tutorial-active');
+  document.getElementById('tutorial-overlay').style.display = 'flex';
+  renderTutorialStep();
+}
+
+function endTutorialFlow() {
+  tutorialActive = false;
+  tutorialStepIndex = 0;
+  clearTutorialFocus();
+  document.body.classList.remove('tutorial-active');
+  document.getElementById('tutorial-overlay').style.display = 'none';
+}
+
+function advanceTutorialByAction(actionName) {
+  if (!tutorialActive) return;
+  const step = tutorialSteps[tutorialStepIndex];
+  if (!step) return;
+
+  if (step.finalAction && step.finalAction === actionName) {
+    endTutorialFlow();
+    showOverlay('Guide Complete', 'Nice! You finished the tutorial. Keep battling to improve.');
+    setTimeout(() => hideOverlay(), 1800);
+    return;
+  }
+
+  if (step.validate && step.validate()) {
+    tutorialStepIndex = Math.min(tutorialStepIndex + 1, tutorialSteps.length - 1);
+    renderTutorialStep();
+  }
+}
+
+window.nextTutorialStep = function() {
+  if (!tutorialActive) return;
+  const step = tutorialSteps[tutorialStepIndex];
+  if (!step || (step.validate && !step.validate())) {
+    return;
+  }
+  tutorialStepIndex = Math.min(tutorialStepIndex + 1, tutorialSteps.length - 1);
+  renderTutorialStep();
+};
+
+window.skipTutorial = function() {
+  endTutorialFlow();
+};
+
 // ═══════════════════════════════════════════════════════
 //  SCENE FLOW — A1 Intro, A2 Grid BG, P1 Static BG
 // ═══════════════════════════════════════════════════════
@@ -425,7 +872,7 @@ function finishIntro() {
   const introVideo = document.getElementById('intro-video');
 
   overlay.classList.add('hidden');
-  introVideo.pause();
+  if (introVideo) introVideo.pause();
 
   // After the fade transition, remove it from layout entirely
   setTimeout(() => {
@@ -556,7 +1003,10 @@ function resetGridBackground() {
 /** Set up the A1 intro video listeners (called once at boot) */
 function setupIntroVideo() {
   const introVideo = document.getElementById('intro-video');
-  if (!introVideo) { introFinished = true; return; }
+  if (!introVideo) {
+    introFinished = true;
+    return;
+  }
 
   // When A1 finishes naturally, reveal the main UI
   introVideo.addEventListener('ended', () => {
@@ -728,6 +1178,8 @@ async function reportBattleResult(result) {
     handleAIResult(result);
     return;
   }
+
+  await persistHumanBuild(result, 'multiplayer');
 
   // Multiplayer logic
   const myState = getMyPresenceState();
@@ -995,6 +1447,7 @@ function resetForNewRound() {
 }
 
 function showLeaderboard(data) {
+  hideOverlay();
   const overlay = document.getElementById('leaderboard-overlay');
   const body = document.getElementById('leaderboard-body');
   body.innerHTML = '';
@@ -1028,19 +1481,35 @@ window.joinRoom = function() {
   initMultiplayer(currentRoomId);
 };
 
-window.startAIGame = function() {
+function beginAIGame({ tutorial = false } = {}) {
   const nameInput = document.getElementById('player-name-input');
   playerName = nameInput.value.trim() || 'You';
   isAIGame = true;
+  tutorialMode = tutorial;
   gameStatus = 'shopping';
   currentRound = 1;
   budget = STARTING_BUDGET;
   previousBudget = STARTING_BUDGET;
   tournamentScores = { player: 0, rival: 0, record: { w: 0, d: 0, l: 0 } };
+  opLog = [];
   
   document.getElementById('round-display').textContent = `Round 1 / 5`;
   switchPhase('shopping');
   resetForNewRound();
+
+  if (tutorialMode) {
+    localStorage.setItem(GUIDE_KEY, '1');
+    setTimeout(() => startTutorialFlow(), 900);
+  }
+}
+
+window.startAIGame = function() {
+  const seenGuide = localStorage.getItem(GUIDE_KEY) === '1';
+  beginAIGame({ tutorial: !seenGuide });
+};
+
+window.startTutorialMode = function() {
+  beginAIGame({ tutorial: true });
 };
 
 window.requestStartGame = async function() {
@@ -1055,6 +1524,7 @@ window.requestStartGame = async function() {
 
 window.backToLobby = function() {
   document.getElementById('leaderboard-overlay').classList.remove('show');
+  hideOverlay();
   if (isAIGame) {
     switchPhase('login');
   } else {
@@ -1117,7 +1587,52 @@ function generateAIGrid() {
   return { items: aiPlacedItems, grid: aiGrid };
 }
 
+async function generateHumanStyleAIGrid() {
+  const pool = await fetchHumanBuildsForAI();
+  const picked = pickHumanStyleBuild(pool);
+  if (!picked) return null;
+
+  const built = buildFromSerializedItems(picked.items);
+  if (!built.items.length) return null;
+  return { ...built, source: 'human' };
+}
+
+async function generateAIOpponentGrid() {
+  const humanPool = await fetchHumanBuildsForAI();
+
+  for (let tries = 0; tries < 5; tries++) {
+    let candidate = null;
+    const roll = Math.random();
+
+    if (humanPool.length >= 3 && roll < 0.5) {
+      const picked = pickHumanStyleBuild(humanPool);
+      if (picked) {
+        const built = buildFromSerializedItems(picked.items);
+        if (built.items.length) candidate = { ...built, source: 'human' };
+      }
+    } else if (roll < 0.85) {
+      candidate = generateArchetypeAIGrid();
+    } else {
+      candidate = { ...generateAIGrid(), source: 'random' };
+    }
+
+    if (!candidate || !candidate.items.length) continue;
+
+    const signature = getBuildSignature(serializePlacedItems(candidate.items));
+    if (signature === lastAIBuildSignature && tries < 4) continue;
+
+    lastAIBuildSignature = signature;
+    return { items: candidate.items, grid: candidate.grid };
+  }
+
+  const fallback = generateAIGrid();
+  lastAIBuildSignature = getBuildSignature(serializePlacedItems(fallback.items));
+  return fallback;
+}
+
 function handleAIResult(result) {
+  persistHumanBuild(result, 'ai');
+
   if (result === 'win') {
     tournamentScores.player += 3;
     tournamentScores.record.w++;
@@ -1139,6 +1654,7 @@ function handleAIResult(result) {
         { name: playerName, score: tournamentScores.player, record: `${tournamentScores.record.w}-${tournamentScores.record.d}-${tournamentScores.record.l}` },
         { name: 'AI Rival', score: tournamentScores.rival, record: `${tournamentScores.record.l}-${tournamentScores.record.d}-${tournamentScores.record.w}` }
       ].sort((a, b) => b.score - a.score);
+      hideOverlay();
       showLeaderboard(leaderboard);
     } else {
       currentRound++;
@@ -1175,7 +1691,7 @@ function renderShop() {
     shopInfoBtn.addEventListener('mouseenter', (e) => {
       e.stopPropagation();
       const popover = document.getElementById('item-popover');
-      popover.innerHTML = `<div class="popover-desc">${item.desc || 'No special effects.'}</div>`;
+      renderItemPopover(item, item.desc || 'No special effects.', false);
       const rect = shopInfoBtn.getBoundingClientRect();
       popover.style.left = (rect.right + 10) + 'px';
       popover.style.top = (rect.top - 10) + 'px';
@@ -1268,8 +1784,10 @@ function selectItem(item) {
   } else {
     selectedItem = item;
     selectedShapeIdx = 0;
+    recordOperation('select_item', { itemId: item.id });
   }
   renderShop();
+  advanceTutorialByAction('select_item');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1504,6 +2022,7 @@ function handlePointerUp(e) {
 
     if (overSellBox && piData) {
       // SELL: 50% refund
+      recordOperation('sell_item_drag', { itemId: piData.item.id, placedId: piData.placedId });
       const refund = piData.item.price * SELL_REFUND_RATE;
       piData.cells.forEach(c => { playerGrid[c.y][c.x] = null; });
       budget += refund;
@@ -1536,6 +2055,7 @@ function handlePointerUp(e) {
       const newOrderIds = Array.from(listEl.querySelectorAll('.placed-item-tag:not(.placeholder)'))
         .map(el => parseInt(el.dataset.id));
       placedItems = newOrderIds.map(id => placedItems.find(p => p.placedId === id)).filter(Boolean);
+      recordOperation('reorder_items', { order: placedItems.map(p => p.item.id) });
       
       renderPlacedItemsList();
       renderGrid();
@@ -1686,7 +2206,7 @@ function renderPlacedItemsList() {
     const m = checkMechanic(pi, placedItems, playerGrid);
     const bonusText = m.text;
     const popover = document.getElementById('item-popover');
-    popover.innerHTML = `<div class="popover-desc">${bonusText || 'No active bonus.'}</div>`;
+    renderItemPopover(pi.item, bonusText || 'No active bonus.', !!m.active);
     const rect = infoBtn.getBoundingClientRect();
     popover.style.left = (rect.left - 210) + 'px';
     popover.style.top = (rect.top - 40) + 'px';
@@ -1708,6 +2228,7 @@ function removeItemFromGrid(placedId) {
   const idx = placedItems.findIndex(p => p.placedId === placedId);
   if (idx === -1) return;
   const pi = placedItems[idx];
+  recordOperation('remove_item', { itemId: pi.item.id, placedId });
   pi.cells.forEach(c => { playerGrid[c.y][c.x] = null; });
   budget += pi.item.price * SELL_REFUND_RATE;
   placedItems.splice(idx, 1);
@@ -1723,6 +2244,7 @@ function sellItem(placedId) {
   const idx = placedItems.findIndex(p => p.placedId === placedId);
   if (idx === -1) return;
   const pi = placedItems[idx];
+  recordOperation('sell_item', { itemId: pi.item.id, placedId });
   pi.cells.forEach(c => { playerGrid[c.y][c.x] = null; });
   budget += pi.item.price * SELL_REFUND_RATE;
   placedItems.splice(idx, 1);
@@ -1736,6 +2258,9 @@ function sellItem(placedId) {
 // Clear All — remove all items and sell for 50% refund
 window.clearAllItems = function() {
   let totalRefund = 0;
+  if (placedItems.length) {
+    recordOperation('clear_all_items', { count: placedItems.length });
+  }
   placedItems.forEach(pi => {
     pi.cells.forEach(c => { playerGrid[c.y][c.x] = null; });
     totalRefund += pi.item.price * SELL_REFUND_RATE;
@@ -1752,9 +2277,11 @@ window.clearAllItems = function() {
 
 window.startBattle = async function() {
   if (placedItems.length === 0) return;
+  recordOperation('start_battle', { mode: isAIGame ? 'ai' : 'multiplayer', round: currentRound });
+  advanceTutorialByAction('start_battle');
   
   if (isAIGame) {
-    const aiData = generateAIGrid();
+    const aiData = await generateAIOpponentGrid();
     gameStatus = 'battling';
     switchPhase('battle');
     import('./battle.js').then(module => {
@@ -1827,6 +2354,7 @@ function onCellClick(gx, gy) {
   if (!valid || selectedItem.price > budget) return;
   const placedId = ++placedIdCounter;
   const placed = { item: selectedItem, cells, shapeIdx: selectedShapeIdx, placedId };
+  recordOperation('place_item', { itemId: selectedItem.id, cells: cloneCells(cells), shapeIdx: selectedShapeIdx });
   placedItems.push(placed);
   cells.forEach(c => { playerGrid[c.y][c.x] = placed; });
   budget -= selectedItem.price;
@@ -1838,6 +2366,7 @@ function onCellClick(gx, gy) {
   renderRules();
   updateStats();
   updateBudgetDisplay();
+  advanceTutorialByAction('place_item');
   // Ensure hover preview is updated for the now-empty selection
   if (lastHoverGx >= 0 && lastHoverGy >= 0) updateHoverPreview(lastHoverGx, lastHoverGy);
 }
@@ -1848,9 +2377,11 @@ document.addEventListener('keydown', (e) => {
     if (!selectedItem) return;
     e.preventDefault(); // Prevent accidental scroll or other browser defaults
     selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
+    recordOperation('rotate_item', { itemId: selectedItem.id, shapeIdx: selectedShapeIdx });
     renderShop();
     if (lastHoverGx >= 0 && lastHoverGy >= 0)
       updateHoverPreview(lastHoverGx, lastHoverGy);
+    advanceTutorialByAction('rotate_item');
   }
 });
 
