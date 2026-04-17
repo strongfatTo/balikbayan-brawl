@@ -52,10 +52,10 @@ export const ITEMS = [
     id: 'jeans', name: 'Jeans', emoji: '👖',
     price: 2, hp: 45, atk: 8,
     shapes: [
-      [[0,0],[0,1],[1,0],[2,0],[2,1]], // U shape opening up
-      [[0,0],[1,0],[0,1],[0,2],[1,2]], // U shape opening right
-      [[0,0],[0,1],[1,1],[2,1],[2,0]], // U shape opening down
-      [[1,0],[0,0],[1,1],[1,2],[0,2]]  // U shape opening left
+      [[0,0],[2,0],[0,1],[2,1],[0,2],[1,2],[2,2]], // ### / #x# / #x#
+      [[0,0],[1,0],[2,0],[2,1],[0,2],[1,2],[2,2]], // ### / xx# / ###
+      [[0,0],[1,0],[2,0],[0,1],[2,1],[0,2],[2,2]], // #x# / #x# / ###
+      [[0,0],[1,0],[2,0],[0,1],[0,2],[1,2],[2,2]]  // ### / #xx / ###
     ],
     colorClass: 'color-jeans',
     desc: 'With Shoes &rarr; +20 Shield',
@@ -85,21 +85,21 @@ export const ITEMS = [
     mechanic: { type: 'first-position', label: '2x ATK (1st!)', badLabel: 'Not 1st' }
   },
   {
-    id: 'bleach', name: 'Bleach', emoji: '🧹',
-    price: 1.5, hp: 1, atk: 999,
+    id: 'bleach', name: 'Hot Sauce', emoji: '🌶️',
+    price: 3, hp: 1, atk: 99,
     shapes: [[[0,0]]],
     colorClass: 'color-bleach',
-    desc: 'One-hit kill, but dies after one hit (HP=1)',
+    desc: 'Glass cannon burst, but dies after one hit (HP=1)',
     mechanic: { type: 'glass-cannon', label: 'Glass Cannon' }
   },
   {
     id: 'pan', name: 'Pan', emoji: '🍳',
     price: 2, hp: 30, atk: 24,
     shapes: [
-      [[0,0],[1,0],[0,1]],           // L bottom-left
-      [[0,0],[0,1],[1,1]],           // L bottom-right
-      [[1,0],[0,1],[1,1]],           // L top-right
-      [[0,0],[1,0],[1,1]]            // L top-left
+      [[0,0],[1,0],[2,0],[0,1],[1,1]], // ##x / ###
+      [[0,0],[0,1],[0,2],[1,1],[1,2]], // ## / ## / #x
+      [[1,0],[2,0],[0,1],[1,1],[2,1]], // ### / x##
+      [[0,0],[1,0],[0,1],[1,1],[1,2]]  // x# / ## / ##
     ],
     colorClass: 'color-pan',
     desc: '3x ATK, but takes 3x damage from Shoes/Jeans',
@@ -107,7 +107,7 @@ export const ITEMS = [
   },
   {
     id: 'pillbox', name: 'Pill Box', emoji: '💊',
-    price: 2, hp: 20, atk: 10,
+    price: 2.5, hp: 30, atk: 15,
     shapes: [
       [[0,0],[1,0],[2,0],[1,1]],     // T pointing down
       [[0,0],[0,1],[0,2],[1,1]],     // T pointing right
@@ -120,12 +120,15 @@ export const ITEMS = [
   },
   {
     id: 'alcohol', name: 'Alcohol', emoji: '🍺',
-    price: 5, hp: 100, atk: 50,
+    price: 4, hp: 100, atk: 50,
     shapes: [
-      [[0,0],[1,0],[2,0],[0,1],[1,1],[2,1],[0,2],[1,2],[2,2]]  // strict 3x3
+      [[0,0],[1,0],[2,0],[0,1],[1,1],[2,1],[1,2]], // x#x / ### / ###
+      [[0,1],[1,0],[1,1],[1,2],[0,0],[0,2],[2,1]], // ##x / ### / ##x
+      [[0,1],[1,0],[1,1],[1,2],[2,1],[0,2],[2,2]], // ### / ### / x#x
+      [[1,0],[2,0],[1,1],[1,2],[2,1],[0,1],[2,2]]  // x## / ### / x##
     ],
     colorClass: 'color-alcohol',
-    desc: 'Very strong premium unit. Occupies a 3x3 space.',
+    desc: 'Very strong premium unit with a 3x3 patterned footprint.',
     mechanic: null
   }
 ];
@@ -137,7 +140,7 @@ export const BONUS_RULES = [
   { itemId: 'jeans', emoji: '👖', name: 'Jeans', desc: 'With Shoes', effect: '+20 Shield', color: '#4ecca3', badEffect: 'No Shield', badColor: '#e94560' },
   { itemId: 'chocolate', emoji: '🍫', name: 'Chocolate', desc: 'Place in Row 1 or 2', effect: 'No penalty', color: '#f0c040', badEffect: '-50% self-ATK', badColor: '#e94560' },
   { itemId: 'bread', emoji: '🍞', name: 'Bread', desc: 'Fight position #1', effect: '2x ATK', color: '#d4a574', badEffect: 'Normal ATK', badColor: '#888' },
-  { itemId: 'bleach', emoji: '🧹', name: 'Bleach', desc: 'One-hit kill', effect: 'ATK 999, HP 1', color: '#e8e8e8' },
+  { itemId: 'bleach', emoji: '🌶️', name: 'Hot Sauce', desc: 'Burst glass cannon', effect: 'ATK 99, HP 1', color: '#e8e8e8' },
   { itemId: 'pan', emoji: '🍳', name: 'Pan', desc: 'High damage dealer', effect: '3x ATK', color: '#7a7a7a', badEffect: '3x DMG from Shoes/Jeans', badColor: '#e94560' },
   { itemId: 'pillbox', emoji: '💊', name: 'Pill Box', desc: 'On enemy kill', effect: 'Heal 30% HP', color: '#e74c6f' },
   { itemId: 'alcohol', emoji: '🍺', name: 'Alcohol', desc: '3x3 premium unit', effect: 'Raw power', color: '#d4a017' }

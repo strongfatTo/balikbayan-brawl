@@ -12,6 +12,7 @@ let placedItems = [];
 let shopOfferings = [];    // 3 random items shown in shop
 let selectedItem = null;
 let selectedShapeIdx = 0;
+let movingItemState = null;
 let hoverCells = [];
 let placedIdCounter = 0;
 let gridCells = [];
@@ -374,6 +375,7 @@ function init() {
   placedItems = [];
   selectedItem = null;
   selectedShapeIdx = 0;
+  movingItemState = null;
   hoverCells = [];
   placedIdCounter = 0;
   lastHoverGx = -1;
@@ -1777,6 +1779,9 @@ function renderShop() {
 }
 
 function selectItem(item) {
+  if (movingItemState) {
+    cancelMovingPlacement(true);
+  }
   if (item.price > budget) return;
   if (selectedItem && selectedItem.id === item.id) {
     selectedItem = null;
@@ -2258,6 +2263,7 @@ function sellItem(placedId) {
 // Clear All — remove all items and sell for 50% refund
 window.clearAllItems = function() {
   let totalRefund = 0;
+  movingItemState = null;
   if (placedItems.length) {
     recordOperation('clear_all_items', { count: placedItems.length });
   }
@@ -2276,6 +2282,10 @@ window.clearAllItems = function() {
 };
 
 window.startBattle = async function() {
+  if (movingItemState) {
+    alert('Place the picked-up item first (or press Esc to cancel move) before fighting.');
+    return;
+  }
   if (placedItems.length === 0) return;
   recordOperation('start_battle', { mode: isAIGame ? 'ai' : 'multiplayer', round: currentRound });
   advanceTutorialByAction('start_battle');
@@ -2329,6 +2339,90 @@ function clearHoverPreview() {
   hoverCells = [];
 }
 
+function startMovingPlacedItem(occupant) {
+  if (!occupant) return;
+
+  movingItemState = {
+    placedId: occupant.placedId,
+    originalCells: cloneCells(occupant.cells),
+    shapeIdx: occupant.shapeIdx || 0
+  };
+
+  occupant.cells.forEach(c => {
+    playerGrid[c.y][c.x] = null;
+  });
+
+  selectedItem = occupant.item;
+  selectedShapeIdx = occupant.shapeIdx || 0;
+  recordOperation('pickup_move_item', { itemId: occupant.item.id, placedId: occupant.placedId });
+
+  clearHoverPreview();
+  renderShop();
+  renderGrid();
+  renderRules();
+  updateStats();
+
+  if (lastHoverGx >= 0 && lastHoverGy >= 0) {
+    updateHoverPreview(lastHoverGx, lastHoverGy);
+  }
+}
+
+function cancelMovingPlacement(restore = true) {
+  if (!movingItemState) return;
+
+  const movedItem = placedItems.find(p => p.placedId === movingItemState.placedId);
+  if (restore && movedItem) {
+    movedItem.cells = cloneCells(movingItemState.originalCells);
+    movedItem.shapeIdx = movingItemState.shapeIdx;
+    movedItem.cells.forEach(c => {
+      playerGrid[c.y][c.x] = movedItem;
+    });
+  }
+
+  movingItemState = null;
+  selectedItem = null;
+  selectedShapeIdx = 0;
+  clearHoverPreview();
+  renderShop();
+  renderGrid();
+  renderRules();
+  updateStats();
+}
+
+function commitMovingPlacement(cells) {
+  if (!movingItemState) return;
+
+  const movedItem = placedItems.find(p => p.placedId === movingItemState.placedId);
+  if (!movedItem) {
+    movingItemState = null;
+    selectedItem = null;
+    selectedShapeIdx = 0;
+    return;
+  }
+
+  movedItem.cells = cloneCells(cells);
+  movedItem.shapeIdx = selectedShapeIdx;
+  cells.forEach(c => {
+    playerGrid[c.y][c.x] = movedItem;
+  });
+
+  recordOperation('move_item', {
+    itemId: movedItem.item.id,
+    placedId: movedItem.placedId,
+    from: cloneCells(movingItemState.originalCells),
+    to: cloneCells(cells)
+  });
+
+  movingItemState = null;
+  selectedItem = null;
+  selectedShapeIdx = 0;
+  clearHoverPreview();
+  renderShop();
+  renderGrid();
+  renderRules();
+  updateStats();
+}
+
 function updateHoverPreview(gx, gy) {
   clearHoverPreview();
   if (!selectedItem) return;
@@ -2345,13 +2439,30 @@ function updateHoverPreview(gx, gy) {
 }
 
 function onCellClick(gx, gy) {
-  if (!selectedItem) return;
+  const occupant = playerGrid[gy][gx];
+
+  if (!selectedItem) {
+    if (occupant) {
+      startMovingPlacedItem(occupant);
+    }
+    return;
+  }
+
   const shape = selectedItem.shapes[selectedShapeIdx];
   const cells = shape.map(([dx, dy]) => ({ x: gx + dx, y: gy + dy }));
   const valid = cells.every(c =>
     c.x >= 0 && c.x < GRID_W && c.y >= 0 && c.y < GRID_H && !playerGrid[c.y][c.x]
   );
-  if (!valid || selectedItem.price > budget) return;
+  if (!valid) return;
+
+  if (movingItemState) {
+    commitMovingPlacement(cells);
+    advanceTutorialByAction('place_item');
+    return;
+  }
+
+  if (selectedItem.price > budget) return;
+
   const placedId = ++placedIdCounter;
   const placed = { item: selectedItem, cells, shapeIdx: selectedShapeIdx, placedId };
   recordOperation('place_item', { itemId: selectedItem.id, cells: cloneCells(cells), shapeIdx: selectedShapeIdx });
@@ -2373,6 +2484,12 @@ function onCellClick(gx, gy) {
 
 // ── Rotation ──
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && movingItemState) {
+    e.preventDefault();
+    cancelMovingPlacement(true);
+    return;
+  }
+
   if (e.key === 'r' || e.key === 'R') {
     if (!selectedItem) return;
     e.preventDefault(); // Prevent accidental scroll or other browser defaults

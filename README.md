@@ -57,15 +57,207 @@ Two players (or you vs. AI) each have **$10** and a **5x5 grid** (25 cells) to f
 | **Jeans** | 👖 | $2 | 45 | 8 | **+20 Shield** if **Running Shoes** are also in the box. |
 | **Chocolate** | 🍫 | $3 | 25 | 40 | **50% ATK Penalty** if not placed in Top Section (Rows 1-2). |
 | **Bread** | 🍞 | $2 | 18 | 12 | **2x ATK** only if placed as your fight position **#1**. |
-| **Bleach** | 🧹 | $1.5 | 1 | 999 | Glass cannon: one-hit kill damage, but extremely fragile. |
+| **Hot Sauce** | 🌶️ | $3 | 1 | 99 | Glass cannon burst damage, but extremely fragile. |
 | **Pan** | 🍳 | $2 | 30 | 24 | **3x ATK**, but takes **3x damage** from **Shoes/Jeans**. |
-| **Pill Box** | 💊 | $2 | 20 | 10 | Heals **30% max HP** after it kills an enemy. |
-| **Alcohol** | 🍺 | $5 | 100 | 50 | Premium **3x3** powerhouse unit with raw stats. |
+| **Pill Box** | 💊 | $2.5 | 30 | 15 | Heals **30% max HP** after it kills an enemy. |
+| **Alcohol** | 🍺 | $4 | 100 | 50 | Premium **3x3** powerhouse unit with raw stats. |
+
+## 📐 Item Shape Layouts (How They Fit in the Box)
+
+Legend:
+- `#` = occupied cell
+- `x` / `.` = empty cell
+
+### Toothpaste (🦷)
+
+`#`
+
+### Running Shoes (👟)
+
+Orientation 1:
+```
+##
+```
+
+Orientation 2:
+```
+#
+#
+```
+
+### Shampoo (🧴)
+
+Orientation 1:
+```
+###
+```
+
+Orientation 2:
+```
+#
+#
+#
+```
+
+### Luncheon Meat (🥩)
+
+```
+##
+##
+```
+
+### Jeans (👖)
+
+Orientation 1:
+```
+###
+#x#
+#x#
+```
+
+Orientation 2:
+```
+###
+xx#
+###
+```
+
+Orientation 3:
+```
+#x#
+#x#
+###
+```
+
+Orientation 4:
+```
+###
+#xx
+###
+```
+
+### Chocolate (🍫)
+
+Orientation 1:
+```
+##
+##
+##
+```
+
+Orientation 2:
+```
+###
+###
+```
+
+### Bread (🍞)
+
+Orientation 1:
+```
+#
+#
+```
+
+Orientation 2:
+```
+##
+```
+
+### Hot Sauce (🌶️)
+
+`#`
+
+### Pan (🍳)
+
+Orientation 1:
+```
+##x
+###
+```
+
+Orientation 2:
+```
+##
+##
+#x
+```
+
+Orientation 3:
+```
+###
+x##
+```
+
+Orientation 4:
+```
+x#
+##
+##
+```
+
+### Pill Box (💊)
+
+Orientation 1:
+```
+###
+.#.
+```
+
+Orientation 2:
+```
+#.
+##
+#.
+```
+
+Orientation 3:
+```
+.#.
+###
+```
+
+Orientation 4:
+```
+.#
+##
+.#
+```
+
+### Alcohol (🍺)
+
+Orientation 1:
+```
+x#x
+###
+###
+```
+
+Orientation 2:
+```
+##x
+###
+##x
+```
+
+Orientation 3:
+```
+###
+###
+x#x
+```
+
+Orientation 4:
+```
+x##
+###
+x##
+```
 
 ### 🆕 New Characters Added
 
 - **Bread (🍞)**: position-based burst if set to fight first.
-- **Bleach (🧹)**: ultra-high ATK glass cannon.
+- **Hot Sauce (🌶️)**: high-burst glass cannon.
 - **Pan (🍳)**: high DPS carry with matchup weakness.
 - **Pill Box (💊)**: sustain unit with on-kill healing.
 - **Alcohol (🍺)**: expensive 3x3 late-round stat monster.
