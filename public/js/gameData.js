@@ -40,7 +40,7 @@ export const ITEMS = [
   },
   {
     id: 'spam', name: 'Luncheon Meat', emoji: '🥩',
-    price: 2, hp: 60, atk: 15,
+    price: 3.5, hp: 60, atk: 15,
     shapes: [
       [[0,0],[1,0],[0,1],[1,1]]
     ],
@@ -94,7 +94,7 @@ export const ITEMS = [
   },
   {
     id: 'pan', name: 'Pan', emoji: '🍳',
-    price: 2, hp: 30, atk: 24,
+    price: 2.5, hp: 30, atk: 24,
     shapes: [
       [[0,0],[1,0],[2,0],[0,1],[1,1]], // ##x / ###
       [[0,0],[0,1],[0,2],[1,1],[1,2]], // ## / ## / #x
@@ -120,7 +120,7 @@ export const ITEMS = [
   },
   {
     id: 'alcohol', name: 'Alcohol', emoji: '🍺',
-    price: 4, hp: 100, atk: 50,
+    price: 4.5, hp: 100, atk: 50,
     shapes: [
       [[0,0],[1,0],[2,0],[0,1],[1,1],[2,1],[1,2]], // x#x / ### / ###
       [[0,1],[1,0],[1,1],[1,2],[0,0],[0,2],[2,1]], // ##x / ### / ##x

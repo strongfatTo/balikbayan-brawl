@@ -51,6 +51,8 @@ let tutorialActive = false;
 let tutorialStepIndex = 0;
 let tutorialLastFocus = null;
 let opLog = [];
+const ROOM_MAX_PLAYERS = 16;
+const ROOM_MIN_PLAYERS_TO_START = 2;
 
 const GUIDE_KEY = 'bb_seen_guide_v1';
 const HUMAN_AI_STORAGE_KEY = 'bb_human_builds_cache_v1';
@@ -195,9 +197,9 @@ function attachChannelListeners(targetChannel) {
         players.push(presenceState[key][0]);
       }
       
-      // Limit room size to 2
-      if (players.length > 2 && !players.find(p => p.id === myPresenceId)) {
-        alert('Room is full (Max 2 players).');
+      // Limit room size to configured maximum
+      if (players.length > ROOM_MAX_PLAYERS && !players.find(p => p.id === myPresenceId)) {
+        alert(`Room is full (Max ${ROOM_MAX_PLAYERS} players).`);
         supabase.removeChannel(targetChannel);
         if (targetChannel === channel) channel = null;
         init();
@@ -1059,6 +1061,7 @@ async function initMultiplayer(roomId) {
 
 function updateLobbyUIFromPresence() {
   const list = document.getElementById('player-list');
+  const listTitle = document.getElementById('player-list-title');
   const roomDisplay = document.getElementById('lobby-room-display');
   const startBtn = document.getElementById('btn-start-game');
   
@@ -1072,6 +1075,8 @@ function updateLobbyUIFromPresence() {
   
   // Sort by join time to determine admin (first one)
   players.sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt));
+  if (listTitle) listTitle.textContent = `Players (${players.length}/${ROOM_MAX_PLAYERS})`;
+  list.classList.toggle('compact-grid', players.length > 8);
   
   if (players.length > 0) {
     isAdmin = players[0].id === myPresenceId;
@@ -1098,7 +1103,11 @@ function updateLobbyUIFromPresence() {
     });
 
     startBtn.style.display = isAdmin ? 'inline-block' : 'none';
-    document.getElementById('lobby-status').textContent = players.length < 2 ? 'Waiting for more players...' : 'Ready to start!';
+    startBtn.disabled = players.length < ROOM_MIN_PLAYERS_TO_START;
+    document.getElementById('lobby-status').textContent =
+      players.length < ROOM_MIN_PLAYERS_TO_START
+        ? `Need at least ${ROOM_MIN_PLAYERS_TO_START} players to start (${players.length}/${ROOM_MAX_PLAYERS}).`
+        : `Ready to start (${players.length}/${ROOM_MAX_PLAYERS}). Admin can launch now.`;
   }
 }
 
@@ -1404,11 +1413,14 @@ function switchPhase(phase) {
 
 function updateLobbyUI(players) {
   const list = document.getElementById('player-list');
+  const listTitle = document.getElementById('player-list-title');
   const roomDisplay = document.getElementById('lobby-room-display');
   const startBtn = document.getElementById('btn-start-game');
   
   roomDisplay.textContent = `Room: ${currentRoomId}`;
   list.innerHTML = '';
+  if (listTitle) listTitle.textContent = `Players (${players.length}/${ROOM_MAX_PLAYERS})`;
+  list.classList.toggle('compact-grid', players.length > 8);
   
   let isAdminLocal = false;
   players.forEach(p => {
@@ -1419,7 +1431,11 @@ function updateLobbyUI(players) {
   });
 
   startBtn.style.display = isAdminLocal ? 'inline-block' : 'none';
-  document.getElementById('lobby-status').textContent = players.length < 2 ? 'Waiting for more players...' : 'Ready to start!';
+  startBtn.disabled = players.length < ROOM_MIN_PLAYERS_TO_START;
+  document.getElementById('lobby-status').textContent =
+    players.length < ROOM_MIN_PLAYERS_TO_START
+      ? `Need at least ${ROOM_MIN_PLAYERS_TO_START} players to start (${players.length}/${ROOM_MAX_PLAYERS}).`
+      : `Ready to start (${players.length}/${ROOM_MAX_PLAYERS}).`;
 }
 
 // ═══════════════════════════════════════════════════════

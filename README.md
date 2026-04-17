@@ -53,14 +53,14 @@ Two players (or you vs. AI) each have **$10** and a **5x5 grid** (25 cells) to f
 | **Toothpaste** | 🦷 | $0.5 | 8 | 6 | +5 ATK if **Shampoo** is also in the box. |
 | **Running Shoes** | 👟 | $1 | 12 | 10 | Pure filler, no special effects. |
 | **Shampoo** | 🧴 | $1 | 20 | 8 | Synergy core for Toothpaste. |
-| **Luncheon Meat** | 🥩 | $2 | 60 | 15 | **30% HP Penalty** if not placed in Bottom Section (Rows 4-5). |
+| **Luncheon Meat** | 🥩 | $3.5 | 60 | 15 | **30% HP Penalty** if not placed in Bottom Section (Rows 4-5). |
 | **Jeans** | 👖 | $2 | 45 | 8 | **+20 Shield** if **Running Shoes** are also in the box. |
 | **Chocolate** | 🍫 | $3 | 25 | 40 | **50% ATK Penalty** if not placed in Top Section (Rows 1-2). |
 | **Bread** | 🍞 | $2 | 18 | 12 | **2x ATK** only if placed as your fight position **#1**. |
 | **Hot Sauce** | 🌶️ | $3 | 1 | 99 | Glass cannon burst damage, but extremely fragile. |
-| **Pan** | 🍳 | $2 | 30 | 24 | **3x ATK**, but takes **3x damage** from **Shoes/Jeans**. |
+| **Pan** | 🍳 | $2.5 | 30 | 24 | **3x ATK**, but takes **3x damage** from **Shoes/Jeans**. |
 | **Pill Box** | 💊 | $2.5 | 30 | 15 | Heals **30% max HP** after it kills an enemy. |
-| **Alcohol** | 🍺 | $4 | 100 | 50 | Premium **3x3** powerhouse unit with raw stats. |
+| **Alcohol** | 🍺 | $4.5 | 100 | 50 | Premium **3x3** powerhouse unit with raw stats. |
 
 ## 📐 Item Shape Layouts (How They Fit in the Box)
 
