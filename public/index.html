@@ -128,7 +128,13 @@
 
     <!-- Rules Panel (moved below the reorder area) -->
     <div class="rules-panel rules-panel-inline">
-      <h4>Item Rules</h4>
+      <h4 id="rules-guide-target" class="rules-guide-title">
+        <span>Item Rules</span>
+        <span class="rules-guide-pill" aria-label="Check Item Rules here">
+          <span class="rules-guide-pill-icon">i</span>
+          <span>Check here</span>
+        </span>
+      </h4>
       <div id="rules-list"></div>
     </div>
   </div>
@@ -211,6 +217,7 @@
 
   <!-- Guided tutorial overlay -->
   <div id="tutorial-overlay" class="tutorial-overlay" style="display:none;">
+    <div id="tutorial-spotlight"></div>
     <div id="tutorial-arrow" class="tutorial-arrow">➜</div>
     <div class="tutorial-card" id="tutorial-card">
       <h3 id="tutorial-title">Guide</h3>

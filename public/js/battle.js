@@ -3,7 +3,18 @@ import { ITEMS, GRID_W, GRID_H, checkMechanic, getEffectiveStats } from './gameD
 // ═══════════════════════════════════════════════════════
 //  BATTLE — with 2D animation (Multiplayer Version)
 // ═══════════════════════════════════════════════════════
-export function startMultiplayerBattle(placedItems, playerGrid, enemyItems, enemyGrid, onComplete) {
+export function startMultiplayerBattle(
+  placedItems,
+  playerGrid,
+  enemyItems,
+  enemyGrid,
+  onComplete,
+  playerDisplayName = 'You',
+  enemyDisplayName = 'Rival'
+) {
+  const playerName = (playerDisplayName || 'You').trim();
+  const enemyName = (enemyDisplayName || 'Rival').trim();
+
   renderBattleGrid('battle-grid-player', playerGrid);
   renderBattleGrid('battle-grid-enemy', enemyGrid);
 
@@ -34,13 +45,25 @@ export function startMultiplayerBattle(placedItems, playerGrid, enemyItems, enem
   renderTeamList('team-list-player', playerUnits);
   renderTeamList('team-list-enemy', enemyUnits);
 
+  const playerHeader = document.querySelector('#team-list-player h4');
+  if (playerHeader) playerHeader.textContent = playerName;
+
+  const enemyHeader = document.querySelector('#team-list-enemy h4');
+  if (enemyHeader) enemyHeader.textContent = enemyName;
+
+  const playerBoxLabel = document.querySelector('.player-label');
+  if (playerBoxLabel) playerBoxLabel.textContent = `${playerName} BOX`;
+
+  const enemyBoxLabel = document.querySelector('.enemy-label');
+  if (enemyBoxLabel) enemyBoxLabel.textContent = `${enemyName} BOX`;
+
   const pTotalAtk = playerUnits.reduce((s,u)=>s+u.atk, 0);
   const eTotalAtk = enemyUnits.reduce((s,u)=>s+u.atk, 0);
   
   document.getElementById('battle-atk-player').textContent = pTotalAtk;
   document.getElementById('battle-atk-enemy').textContent = eTotalAtk;
 
-  runAnimatedBattle(playerUnits, enemyUnits, onComplete);
+  runAnimatedBattle(playerUnits, enemyUnits, onComplete, playerName, enemyName);
 }
 
 function renderTeamList(containerId, units) {
@@ -146,7 +169,7 @@ function showHealNumber(stage, x, y, heal) {
   setTimeout(() => el.remove(), 800);
 }
 
-function runAnimatedBattle(playerUnits, enemyUnits, onComplete) {
+function runAnimatedBattle(playerUnits, enemyUnits, onComplete, playerName, enemyName) {
   const stage = document.getElementById('battle-stage');
   const log = document.getElementById('battle-log');
   log.innerHTML = '';
@@ -159,7 +182,7 @@ function runAnimatedBattle(playerUnits, enemyUnits, onComplete) {
     if (u.bonus) addLog(log, 'bonus-line', `  ${u.emoji} ${u.name} gains ${u.bonus}`);
   });
   enemyUnits.forEach(u => {
-    if (u.bonus) addLog(log, 'bonus-line', `  Rival's ${u.emoji} ${u.name} gains ${u.bonus}`);
+    if (u.bonus) addLog(log, 'bonus-line', `  ${enemyName}'s ${u.emoji} ${u.name} gains ${u.bonus}`);
   });
 
   const pAlive = () => playerUnits.filter(u => u.hp > 0);
@@ -191,8 +214,8 @@ function runAnimatedBattle(playerUnits, enemyUnits, onComplete) {
   }
 
   function updateWaitingList(pCount, eCount) {
-    document.getElementById('battle-atk-player').parentElement.querySelector('.label').textContent = `Your ATK`;
-    document.getElementById('battle-atk-enemy').parentElement.querySelector('.label').textContent = `Rival ATK`;
+    document.getElementById('battle-atk-player').parentElement.querySelector('.label').textContent = `${playerName} ATK`;
+    document.getElementById('battle-atk-enemy').parentElement.querySelector('.label').textContent = `${enemyName} ATK`;
   }
 
   spawnSprites();

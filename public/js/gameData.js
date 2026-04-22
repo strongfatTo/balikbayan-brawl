@@ -10,6 +10,21 @@ export const REWARD_LOSS = 5;
 export const REWARD_DRAW = 4;
 export const SHOP_OFFERING_COUNT = 3;
 
+// Fixed shop item sequence for Guide/Tutorial mode (predetermined rotation)
+export const FIXED_SHOP_SEQUENCE = [
+  'jeans',        // Step 1: Show rotatable synergy item
+  'shampoo',      // Step 2: Synergy partner
+  'bread',        // Step 3: Rotatable item for practicing rotation
+  'shoes',        // Step 4: Simple filler
+  'spam',         // Step 5: Row effect example
+  'chocolate',   // Step 6: More row effects
+  'pillbox',      // Step 7: On-kill heal
+  'pan',          // Step 8: Type weakness
+  'bleach',       // Step 9: Glass cannon
+  'alcohol',     // Step 10: Premium unit
+  'toothpaste'   // Step 11: Show synergy item
+];
+
 // ═══════════════════════════════════════════════════════
 //  ITEM DEFINITIONS
 // ═══════════════════════════════════════════════════════

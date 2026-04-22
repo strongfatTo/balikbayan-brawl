@@ -1,7 +1,7 @@
 import { ITEMS, GRID_W, GRID_H, checkMechanic, getEffectiveStats,
          TOOTHPASTE_BASE_PRICE, SELL_REFUND_RATE, RESTOCK_COST,
          STARTING_BUDGET, REWARD_WIN, REWARD_LOSS, REWARD_DRAW,
-         SHOP_OFFERING_COUNT } from './gameData.js';
+         SHOP_OFFERING_COUNT, FIXED_SHOP_SEQUENCE } from './gameData.js';
 
 // ═══════════════════════════════════════════════════════
 //  GAME STATE
@@ -49,7 +49,10 @@ let lastAIBuildSignature = '';
 let tutorialMode = false;
 let tutorialActive = false;
 let tutorialStepIndex = 0;
-let tutorialLastFocus = null;
+let tutorialFocusedElements = [];
+let tutorialStepBodyClass = '';
+let tutorialRotateAttempts = 0;
+let tutorialShopIndex = 0;  // Tracks position in FIXED_SHOP_SEQUENCE for tutorial mode
 let opLog = [];
 const ROOM_MAX_PLAYERS = 16;
 const ROOM_MIN_PLAYERS_TO_START = 2;
@@ -263,12 +266,26 @@ function attachChannelListeners(targetChannel) {
       if (targetChannel !== channel) return;
       const data = envelope.payload;
       console.log('Player processed result:', data.id);
+
+      if (presenceState[data.id] && presenceState[data.id][0]) {
+        presenceState[data.id][0].processedResult = true;
+
+        const parsedScore = Number(data.score);
+        if (Number.isFinite(parsedScore)) {
+          presenceState[data.id][0].score = parsedScore;
+        }
+
+        if (data.record && typeof data.record === 'object') {
+          presenceState[data.id][0].record = {
+            w: Number(data.record.w) || 0,
+            d: Number(data.record.d) || 0,
+            l: Number(data.record.l) || 0
+          };
+        }
+      }
+
       if (isAdmin && data.round === currentRound) {
         adminProcessed[data.id] = true;
-        
-        if (presenceState[data.id] && presenceState[data.id][0]) {
-            presenceState[data.id][0].processedResult = true;
-        }
 
         console.log('Admin checking round completion after broadcast...');
         setTimeout(() => checkRoundCompletion(), 500);
@@ -348,12 +365,25 @@ function updateBudgetDisplay() {
 // ═══════════════════════════════════════════════════════
 function restockShop() {
   shopOfferings = [];
-  const availableItems = [...ITEMS];
-  for (let i = 0; i < SHOP_OFFERING_COUNT; i++) {
-    if (availableItems.length === 0) break;
-    const randomIdx = Math.floor(Math.random() * availableItems.length);
-    shopOfferings.push(availableItems[randomIdx]);
-    availableItems.splice(randomIdx, 1);
+  
+  // Use fixed sequence for tutorial mode, random for regular games
+  if (tutorialMode) {
+    // Pull next 3 items from the fixed sequence (wrap around if needed)
+    for (let i = 0; i < SHOP_OFFERING_COUNT; i++) {
+      const itemId = FIXED_SHOP_SEQUENCE[tutorialShopIndex % FIXED_SHOP_SEQUENCE.length];
+      const item = ITEMS.find(it => it.id === itemId);
+      if (item) shopOfferings.push(item);
+      tutorialShopIndex++;
+    }
+  } else {
+    // Random selection for regular games
+    const availableItems = [...ITEMS];
+    for (let i = 0; i < SHOP_OFFERING_COUNT; i++) {
+      if (availableItems.length === 0) break;
+      const randomIdx = Math.floor(Math.random() * availableItems.length);
+      shopOfferings.push(availableItems[randomIdx]);
+      availableItems.splice(randomIdx, 1);
+    }
   }
 }
 
@@ -396,7 +426,10 @@ function init() {
   tutorialActive = false;
   tutorialMode = false;
   tutorialStepIndex = 0;
-  tutorialLastFocus = null;
+  tutorialFocusedElements = [];
+  tutorialStepBodyClass = '';
+  tutorialRotateAttempts = 0;
+  tutorialShopIndex = 0;
   opLog = [];
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (lobbyTimer) { clearTimeout(lobbyTimer); lobbyTimer = null; }
@@ -746,63 +779,181 @@ function renderItemPopover(item, bonusText = '', isActive = false) {
 
 const tutorialSteps = [
   {
-    title: 'Guide Start',
-    text: 'Welcome! This guide will teach one full flow: pick, rotate, place, and fight.',
+    id: 'guide_start',
+    title: 'Step 1/7 - Guide Flow',
+    text: 'This guide has two phases: Shop Flow (pick, rotate, place) then Battle Flow (read rules, fight).',
     target: '.selection-tip',
     validate: () => true
   },
   {
-    title: 'Pick An Item',
-    text: 'Click any item card in the shop list to select it.',
-    target: '#shop-list',
-    validate: () => !!selectedItem
+    id: 'pick_rotatable_item',
+    title: 'Step 2/7 - Pick A Rotatable Item',
+    text: 'Select an item card that shows an R button. Items with R can be rotated.',
+    target: '.shop-panel',
+    validate: () => !!selectedItem && selectedItem.shapes.length > 1
   },
   {
-    title: 'Rotate Shape',
-    text: 'Press R or click the R button on selected item to rotate it.',
-    target: '#shop-list .item-card.selected',
-    validate: () => opLog.some(log => log.type === 'rotate_item')
+    id: 'rotate_shape',
+    title: 'Step 3/7 - Rotate Shape',
+    text: 'Items can be rotated. Press R or click the highlighted R icon 3 times to practice.',
+    target: '#shop-list .item-card.selected .rotate-btn',
+    extraTargets: ['#shop-list .item-card.selected'],
+    validate: () => tutorialRotateAttempts >= 3,
+    stepClass: 'tutorial-step-rotate'
   },
   {
-    title: 'Place On Grid',
+    id: 'place_on_grid',
+    title: 'Step 4/7 - Place On Grid',
     text: 'Now click the grid to place your selected item.',
     target: '.grid-bg-wrapper',
     validate: () => placedItems.length > 0
   },
   {
-    title: 'Read Rules',
-    text: 'Check Item Rules. They explain top/bottom zones and synergies.',
-    target: '#rules-list',
-    validate: () => true
+    id: 'row_effects',
+    title: 'Step 5/7 - Row Effects',
+    text: 'Row effects matter. Row 1-2 (top) and Row 4-5 (bottom) can change bonuses and penalties.',
+    target: '.row-indicators',
+    extraTargets: [
+      '.row-indicators .ri:nth-child(1)',
+      '.row-indicators .ri:nth-child(2)',
+      '.row-indicators .ri:nth-child(3)',
+      '.row-indicators .ri:nth-child(4)',
+      '.row-indicators .ri:nth-child(5)'
+    ],
+    validate: () => true,
+    stepClass: 'tutorial-step-row-effects'
   },
   {
-    title: 'Fight',
+    id: 'read_rules',
+    title: 'Step 6/7 - Read Rules',
+    text: 'Check Item Rules here before fighting. They explain row effects and synergies.',
+    target: '#shop-info-btn',
+    validate: () => true,
+    stepClass: 'tutorial-step-read-rules'
+  },
+  {
+    id: 'fight',
+    title: 'Step 7/7 - Fight',
     text: 'Press FIGHT to start combat. Tutorial ends after battle starts.',
     target: '#btn-fight',
     validate: () => false,
-    finalAction: 'start_battle'
+    finalAction: 'start_battle',
+    stepClass: 'tutorial-step-fight'
   }
 ];
 
 function clearTutorialFocus() {
-  if (tutorialLastFocus) tutorialLastFocus.classList.remove('tutorial-focus');
-  tutorialLastFocus = null;
+  tutorialFocusedElements.forEach(el => {
+    el.classList.remove('tutorial-focus');
+    el.style.position = '';
+  });
+  tutorialFocusedElements = [];
+  const spotlight = document.getElementById('tutorial-spotlight');
+  if (spotlight) spotlight.style.display = 'none';
+  const overlay = document.querySelector('.tutorial-overlay');
+  if (overlay) overlay.style.clipPath = 'none';
 }
 
-function setTutorialFocus(selector) {
+function clearTutorialStepClass() {
+  if (tutorialStepBodyClass) {
+    document.body.classList.remove(tutorialStepBodyClass);
+    tutorialStepBodyClass = '';
+  }
+}
+
+function setTutorialFocus(step) {
   clearTutorialFocus();
-  if (!selector) return;
+  if (!step) return;
 
-  const el = document.querySelector(selector);
-  if (!el) return;
+  const selectors = [];
+  if (step.target) selectors.push(step.target);
+  if (Array.isArray(step.extraTargets)) selectors.push(...step.extraTargets);
 
-  el.classList.add('tutorial-focus');
-  tutorialLastFocus = el;
+  let primaryEl = null;
+  selectors.forEach((selector) => {
+    if (!selector) return;
+    const el = document.querySelector(selector);
+    if (!el) return;
+
+    // Preserve original position for already-positioned elements
+    const computed = window.getComputedStyle(el);
+    if (computed.position === 'absolute') {
+      el.style.position = 'absolute';
+    } else {
+      el.classList.add('tutorial-focus');
+    }
+    tutorialFocusedElements.push(el);
+    if (!primaryEl) primaryEl = el;
+  });
+
+  // Update spotlight to cover all focused elements
+  updateSpotlight();
 
   const arrow = document.getElementById('tutorial-arrow');
-  const rect = el.getBoundingClientRect();
+  if (!primaryEl) {
+    arrow.style.display = 'none';
+    return;
+  }
+
+  arrow.style.display = 'block';
+  const rect = primaryEl.getBoundingClientRect();
   arrow.style.left = `${Math.max(12, rect.left - 38)}px`;
   arrow.style.top = `${Math.max(16, rect.top + rect.height / 2 - 16)}px`;
+}
+
+function updateSpotlight() {
+  const spotlight = document.getElementById('tutorial-spotlight');
+  const overlay = document.querySelector('.tutorial-overlay');
+  if (!spotlight || tutorialFocusedElements.length === 0) {
+    spotlight.style.display = 'none';
+    if (overlay) overlay.style.clipPath = 'none';
+    return;
+  }
+
+  // Calculate bounding box of all focused elements
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+  tutorialFocusedElements.forEach(el => {
+    const rect = el.getBoundingClientRect();
+    minX = Math.min(minX, rect.left);
+    minY = Math.min(minY, rect.top);
+    maxX = Math.max(maxX, rect.right);
+    maxY = Math.max(maxY, rect.bottom);
+  });
+
+  // Add padding
+  const padding = 8;
+  const left = minX - padding;
+  const top = minY - padding;
+  const width = maxX - minX + padding * 2;
+  const height = maxY - minY + padding * 2;
+
+  // Position spotlight element
+  spotlight.style.display = 'block';
+  spotlight.style.left = `${left}px`;
+  spotlight.style.top = `${top}px`;
+  spotlight.style.width = `${width}px`;
+  spotlight.style.height = `${height}px`;
+
+  // Use clip-path on overlay to create hole
+  // The polygon excludes the spotlight area, making overlay dark everywhere except the hole
+  if (overlay) {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    // Create a path around the viewport, cutting out the spotlight rectangle
+    overlay.style.clipPath = `polygon(
+      0% 0%,
+      0% 100%,
+      ${left}px 100%,
+      ${left}px ${top}px,
+      ${left + width}px ${top}px,
+      ${left + width}px ${top + height}px,
+      ${left}px ${top + height}px,
+      ${left}px 100%,
+      100% 100%,
+      100% 0%
+    )`;
+  }
 }
 
 function renderTutorialStep() {
@@ -812,12 +963,19 @@ function renderTutorialStep() {
   document.getElementById('tutorial-title').textContent = step.title;
   document.getElementById('tutorial-text').textContent = step.text;
   document.getElementById('tutorial-next-btn').style.display = step.finalAction ? 'none' : 'inline-flex';
-  setTutorialFocus(step.target);
+  clearTutorialStepClass();
+  if (step.stepClass) {
+    document.body.classList.add(step.stepClass);
+    tutorialStepBodyClass = step.stepClass;
+  }
+  setTutorialFocus(step);
 }
 
 function startTutorialFlow() {
   tutorialActive = true;
   tutorialStepIndex = 0;
+  tutorialRotateAttempts = 0;
+  clearTutorialStepClass();
   document.body.classList.add('tutorial-active');
   document.getElementById('tutorial-overlay').style.display = 'flex';
   renderTutorialStep();
@@ -826,7 +984,9 @@ function startTutorialFlow() {
 function endTutorialFlow() {
   tutorialActive = false;
   tutorialStepIndex = 0;
+  tutorialRotateAttempts = 0;
   clearTutorialFocus();
+  clearTutorialStepClass();
   document.body.classList.remove('tutorial-active');
   document.getElementById('tutorial-overlay').style.display = 'none';
 }
@@ -1173,9 +1333,17 @@ function handleBattleStart(data) {
   switchPhase('battle');
   
   import('./battle.js').then(module => {
-     module.startMultiplayerBattle(placedItems, playerGrid, data.enemyItems, data.enemyGrid, async (result) => {
-       await reportBattleResult(result);
-     });
+     module.startMultiplayerBattle(
+       placedItems,
+       playerGrid,
+       data.enemyItems,
+       data.enemyGrid,
+       async (result) => {
+         await reportBattleResult(result);
+       },
+       playerName || 'You',
+       data.enemyName || 'Rival'
+     );
   });
 }
 
@@ -1219,7 +1387,12 @@ async function reportBattleResult(result) {
   await safeTrackPresence(myState, 'battle result');
   
   // Broadcast that we processed our result
-  await sendBroadcast('processed_result', { id: myPresenceId, round: currentRound });
+  await sendBroadcast('processed_result', {
+    id: myPresenceId,
+    round: currentRound,
+    score: myState.score,
+    record: { ...myState.record }
+  });
 
   // Show a message to wait for other players
   setTimeout(() => {
@@ -1352,11 +1525,20 @@ async function checkRoundCompletion() {
     isAdvancingRound = true; // Lock to prevent multiple triggers
     
     if (currentRound >= 5) {
-      const leaderboard = players.map(p => ({
-        name: p.name,
-        score: p.score,
-        record: `${p.record.w}-${p.record.d}-${p.record.l}`
-      })).sort((a, b) => b.score - a.score);
+      const leaderboard = players.map(p => {
+        const parsedScore = Number(p.score);
+        const score = Number.isFinite(parsedScore) ? parsedScore : 0;
+        const rec = p.record || {};
+        const w = Number(rec.w) || 0;
+        const d = Number(rec.d) || 0;
+        const l = Number(rec.l) || 0;
+
+        return {
+          name: p.name || 'Unknown Player',
+          score,
+          record: `${w}-${d}-${l}`
+        };
+      }).sort((a, b) => b.score - a.score);
       
       console.log('Tournament over, sending results:', leaderboard);
       await sendBroadcast('tournament_results', { leaderboard });
@@ -1470,13 +1652,20 @@ function showLeaderboard(data) {
   const body = document.getElementById('leaderboard-body');
   body.innerHTML = '';
   
-  data.forEach((entry, idx) => {
+  const safeRows = Array.isArray(data) ? data : [];
+
+  safeRows.forEach((entry, idx) => {
+    const parsedScore = Number(entry?.score);
+    const score = Number.isFinite(parsedScore) ? parsedScore : 0;
+    const name = entry?.name || 'Unknown Player';
+    const record = entry?.record || '0-0-0';
+
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${idx + 1}</td>
-      <td>${entry.name}</td>
-      <td>${entry.score}</td>
-      <td>${entry.record}</td>
+      <td>${name}</td>
+      <td>${score}</td>
+      <td>${record}</td>
     `;
     body.appendChild(row);
   });
@@ -1698,7 +1887,8 @@ function renderShop() {
 
     // Add info button to shop card
     const shopInfoBtn = document.createElement('div');
-    shopInfoBtn.className = 'info-btn';
+    shopInfoBtn.className = 'info-btn shop-info-btn';
+    shopInfoBtn.id = 'shop-info-btn';
     shopInfoBtn.style.opacity = '1';
     shopInfoBtn.style.position = 'absolute';
     shopInfoBtn.style.top = '4px';
@@ -1774,9 +1964,7 @@ function renderShop() {
       rotateBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (selectedItem && selectedItem.id === item.id) {
-          selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
-          renderShop();
-          if (lastHoverGx >= 0 && lastHoverGy >= 0) updateHoverPreview(lastHoverGx, lastHoverGy);
+          rotateSelectedItem();
         }
       });
       card.appendChild(rotateBtn);
@@ -1809,6 +1997,34 @@ function selectItem(item) {
   }
   renderShop();
   advanceTutorialByAction('select_item');
+}
+
+function rotateSelectedItem() {
+  if (!selectedItem || selectedItem.shapes.length <= 1) return false;
+
+  selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
+  recordOperation('rotate_item', { itemId: selectedItem.id, shapeIdx: selectedShapeIdx });
+
+  if (tutorialActive) {
+    const step = tutorialSteps[tutorialStepIndex];
+    if (step && step.id === 'rotate_shape') {
+      tutorialRotateAttempts += 1;
+    }
+  }
+
+  renderShop();
+  if (lastHoverGx >= 0 && lastHoverGy >= 0) {
+    updateHoverPreview(lastHoverGx, lastHoverGy);
+  }
+  advanceTutorialByAction('rotate_item');
+
+  // Re-apply tutorial focus after renderShop re-renders the DOM
+  if (tutorialActive) {
+    const currentStep = tutorialSteps[tutorialStepIndex];
+    if (currentStep) setTutorialFocus(currentStep);
+  }
+
+  return true;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2311,9 +2527,17 @@ window.startBattle = async function() {
     gameStatus = 'battling';
     switchPhase('battle');
     import('./battle.js').then(module => {
-      module.startMultiplayerBattle(placedItems, playerGrid, aiData.items, aiData.grid, (result) => {
-        handleAIResult(result);
-      });
+      module.startMultiplayerBattle(
+        placedItems,
+        playerGrid,
+        aiData.items,
+        aiData.grid,
+        (result) => {
+          handleAIResult(result);
+        },
+        playerName || 'You',
+        'AI Rival'
+      );
     });
     return;
   }
@@ -2509,12 +2733,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') {
     if (!selectedItem) return;
     e.preventDefault(); // Prevent accidental scroll or other browser defaults
-    selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
-    recordOperation('rotate_item', { itemId: selectedItem.id, shapeIdx: selectedShapeIdx });
-    renderShop();
-    if (lastHoverGx >= 0 && lastHoverGy >= 0)
-      updateHoverPreview(lastHoverGx, lastHoverGy);
-    advanceTutorialByAction('rotate_item');
+    rotateSelectedItem();
   }
 });
 
