@@ -1056,7 +1056,7 @@ window.skipIntro = function() {
 /** Preload the A2 video blob at startup so it's ready when entering the game */
 let a2VideoBlob = null;
 function preloadA2Video() {
-  fetch('assets/videos/A2 .mp4')
+  fetch('assets/videos/A2GIF_transparent.mp4')
     .then(r => r.blob())
     .then(blob => {
       a2VideoBlob = URL.createObjectURL(blob);
