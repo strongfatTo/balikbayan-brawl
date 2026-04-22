@@ -42,6 +42,14 @@
       <option value="90">Prep Time: 1 min 30 sec</option>
       <option value="120">Prep Time: 2 mins</option>
     </select>
+    <div class="login-config-row">
+      <label for="create-round-count-select">Rounds</label>
+      <select id="create-round-count-select">
+        <option value="3">3 Rounds</option>
+        <option value="4">4 Rounds</option>
+        <option value="5" selected>5 Rounds</option>
+      </select>
+    </div>
     <div class="login-actions">
       <button class="btn btn-fight" onclick="joinRoom()">JOIN ROOM</button>
       <button class="btn btn-clear" style="width:100%" onclick="createRoom()">CREATE ROOM</button>
@@ -69,6 +77,14 @@
         <option value="60">1 min</option>
         <option value="90">1 min 30 sec</option>
         <option value="120">2 mins</option>
+      </select>
+    </div>
+    <div class="lobby-config-row">
+      <label for="round-count-select">Round Limit</label>
+      <select id="round-count-select" onchange="changeRoundCount()">
+        <option value="3">3 rounds</option>
+        <option value="4">4 rounds</option>
+        <option value="5" selected>5 rounds</option>
       </select>
     </div>
     <div id="lobby-status">Waiting for more players...</div>

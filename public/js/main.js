@@ -7,45 +7,43 @@ import { ITEMS, GRID_W, GRID_H, checkMechanic, getEffectiveStats,
 //  GAME STATE
 // ????????????????????????????????????????????????????????
 let budget = STARTING_BUDGET;
+let previousBudget = STARTING_BUDGET;
 let playerGrid = Array.from({length: GRID_H}, () => Array(GRID_W).fill(null));
 let placedItems = [];
-let shopOfferings = [];    // 3 random items shown in shop
+let gridCells = [];
 let selectedItem = null;
 let selectedShapeIdx = 0;
 let movingItemState = null;
 let hoverCells = [];
 let placedIdCounter = 0;
-let gridCells = [];
-let lastHoverGx = -1, lastHoverGy = -1;
-let gridBuilt = false;
-let previousBudget = STARTING_BUDGET;  // for wallet animation
-
-// Multiplayer state
-let supabase = null;
-let channel = null;
-let currentRoomId = null;
-let playerName = '';
-let gameStatus = 'login'; // login, lobby, shopping, waiting, battling, results
-let isAIGame = false;
+let lastHoverGx = -1;
+let lastHoverGy = -1;
+let shopOfferings = [];
+let gameStatus = 'login';
 let currentRound = 1;
-let tournamentScores = { player: 0, rival: 0, record: { w: 0, d: 0, l: 0 } };
+let isAIGame = false;
 let isAdmin = false;
-let presenceState = {};
-let myPresenceId = null;
-let lobbyTimer = null;
 let isAdvancingRound = false;
-let prepCountdownTimer = null;
-let prepDeadlineTs = 0;
 let hasSubmittedThisRound = false;
 let currentPairing = null;
+let roomConfig = { prepDurationSec: 60, maxRounds: 5, createdBy: null };
+let currentRoomId = null;
+let playerName = '';
+let myPresenceId = null;
+let presenceState = {};
+let channel = null;
 let tournamentState = null;
-let roomConfig = { prepDurationSec: 60, createdBy: null };
-let pendingCreateConfig = null;
+let tournamentScores = { player: 0, rival: 0, record: { w: 0, d: 0, l: 0 } };
 let lastLeaderboardPositions = {};
+let adminSubmissions = {};
+let adminProcessed = {};
+let lobbyTimer = null;
+let prepCountdownTimer = null;
+let prepDeadlineTs = 0;
 let introFinished = false;
 let a2HasPlayed = false;
-let adminSubmissions = {}; // targetId -> { items, grid }
-let adminProcessed = {}; // targetId -> boolean
+let gridBuilt = false;
+let supabase = null;
 let matchedRound = null;
 let activeBattleRound = null;
 let reportedResultRound = null;
@@ -54,6 +52,7 @@ let reconnectTimer = null;
 let reconnectAttempt = 0;
 let reconnectInProgress = false;
 let lastAIBuildSignature = '';
+let pendingCreateConfig = null;
 let tutorialMode = false;
 let tutorialActive = false;
 let tutorialStepIndex = 0;
@@ -62,7 +61,9 @@ let opLog = [];
 const ROOM_MAX_PLAYERS = 16;
 const ROOM_MIN_PLAYERS_TO_START = 2;
 const PREP_TIME_OPTIONS = [60, 90, 120];
+const ROUND_COUNT_OPTIONS = [3, 4, 5];
 const DEFAULT_PREP_TIME_SEC = 60;
+const DEFAULT_MAX_ROUNDS = 5;
 const ROUND_LEADERBOARD_MS = 4000;
 
 const GUIDE_KEY = 'bb_seen_guide_v1';
@@ -109,6 +110,7 @@ function getMyPresenceState() {
     processedResult: existing?.processedResult || false,
     currentRound: existing?.currentRound || currentRound,
     prepDurationSec: existing?.prepDurationSec || roomConfig.prepDurationSec || DEFAULT_PREP_TIME_SEC,
+    maxRounds: existing?.maxRounds || roomConfig.maxRounds || DEFAULT_MAX_ROUNDS,
     roomCreatedBy: existing?.roomCreatedBy || roomConfig.createdBy || myPresenceId
   };
 }
@@ -190,11 +192,13 @@ async function handleChannelStatus(status, err, expectedChannel = channel) {
     if (pendingCreateConfig) {
       roomConfig = {
         prepDurationSec: pendingCreateConfig.prepDurationSec,
+        maxRounds: pendingCreateConfig.maxRounds,
         createdBy: myPresenceId
       };
       await safeTrackPresence(getMyPresenceState(), 'room create config');
       await sendBroadcast('room_config', {
         prepDurationSec: roomConfig.prepDurationSec,
+        maxRounds: roomConfig.maxRounds,
         createdBy: myPresenceId
       });
       pendingCreateConfig = null;
@@ -242,59 +246,13 @@ function attachChannelListeners(targetChannel) {
       if (targetChannel !== channel) return;
 
       presenceState = targetChannel.presenceState();
-    if (pendingCreateConfig) {
-      roomConfig = {
-        prepDurationSec: pendingCreateConfig.prepDurationSec,
-        createdBy: myPresenceId
-      };
-      await safeTrackPresence(getMyPresenceState(), 'room create config');
-      await sendBroadcast('room_config', {
-        prepDurationSec: roomConfig.prepDurationSec,
-        createdBy: myPresenceId
-      });
-      pendingCreateConfig = null;
-    }
-
-    // After reconnection, delay admin checks to allow presence to sync
-    if (isAdmin && (gameStatus === 'shopping' || gameStatus === 'waiting' || gameStatus === 'battling')) {
-      console.log('[DEBUG] Channel reconnected, scheduling delayed sync check...');
-      setTimeout(async () => {
-        if (!isAdmin) return;
-        // Ask non-admin players who submitted this round to resend their grid,
-        // since broadcasts are not replayed after a reconnect and adminSubmissions
-        // may be missing their entries.
-        if (gameStatus === 'shopping' || gameStatus === 'waiting') {
-          // If admin is in 'waiting' state, they already submitted before the channel dropped.
-          // Re-store their own submission unconditionally since presence hasn't synced yet
-          // at this point and the submitted flag cannot be trusted.
-          if (gameStatus === 'waiting' && !adminSubmissions[myPresenceId] && placedItems.length > 0) {
-            adminSubmissions[myPresenceId] = { items: placedItems, grid: playerGrid, round: currentRound };
-            console.log('[DEBUG] Admin re-stored own submission after reconnect (waiting state)');
-          }
-          console.log('[DEBUG] Admin requesting resubmit from players (reconnect recovery)');
-          await sendBroadcast('request_resubmit', { round: currentRound });
-        }
-        // Force check submissions and processed
-        checkAndMatchPlayers();
-        checkRoundCompletion();
-      }, 2500); // Give presence time to sync after reconnection (other players need time to re-track)
-    }      
-      // Limit room size to configured maximum
-      if (allPlayers.length > ROOM_MAX_PLAYERS && !allPlayers.find(p => p.id === myPresenceId)) {
-        alert(`Room is full (Max ${ROOM_MAX_PLAYERS} players).`);
-        supabase.removeChannel(targetChannel);
-        if (targetChannel === channel) channel = null;
-        init();
-        return;
-      }
 
       const players = getPresencePlayers();
 
       syncRoomConfigFromPresence(players);
-      const allPlayers = players;
       
       // Limit room size to configured maximum
-      if (allPlayers.length > ROOM_MAX_PLAYERS && !allPlayers.find(p => p.id === myPresenceId)) {
+      if (players.length > ROOM_MAX_PLAYERS && !players.find(p => p.id === myPresenceId)) {
         alert(`Room is full (Max ${ROOM_MAX_PLAYERS} players).`);
         supabase.removeChannel(targetChannel);
         if (targetChannel === channel) channel = null;
@@ -317,6 +275,7 @@ function attachChannelListeners(targetChannel) {
       if (!PREP_TIME_OPTIONS.includes(data.prepDurationSec)) return;
       roomConfig = {
         prepDurationSec: data.prepDurationSec,
+        maxRounds: ROUND_COUNT_OPTIONS.includes(Number(data.maxRounds)) ? Number(data.maxRounds) : roomConfig.maxRounds,
         createdBy: data.createdBy || roomConfig.createdBy
       };
       updatePrepTimeDisplay();
@@ -527,7 +486,7 @@ function init() {
   hasSubmittedThisRound = false;
   currentPairing = null;
   tournamentState = null;
-  roomConfig = { prepDurationSec: DEFAULT_PREP_TIME_SEC, createdBy: null };
+  roomConfig = { prepDurationSec: DEFAULT_PREP_TIME_SEC, maxRounds: DEFAULT_MAX_ROUNDS, createdBy: null };
   pendingCreateConfig = null;
   lastLeaderboardPositions = {};
   matchedRound = null;
@@ -802,68 +761,68 @@ function generateArchetypeAIGrid() {
 }
 
 function getItemGuideDefinition(item, bonusText = '') {
-  const blank = ['','','','','','','','',''];
+  const blank = ['', '', '', '', '', '', '', '', ''];
 
   const defs = {
     toothpaste: {
       title: 'Synergy Setup',
       subtitle: bonusText || 'Pair with Shampoo for +5 ATK.',
-      cells: ['S','','','',item.emoji,'','','',''],
+      cells: ['S', '', '', '', 'P', '', '', '', ''],
       marks: { S: 'good' }
     },
     shampoo: {
       title: 'Synergy Core',
       subtitle: bonusText || 'Enable Toothpaste bonus.',
-      cells: ['T','','','',item.emoji,'','','',''],
+      cells: ['T', '', '', '', 'S', '', '', '', ''],
       marks: { T: 'good' }
     },
     spam: {
       title: 'Placement Zone',
       subtitle: bonusText || 'Keep in bottom rows (4-5).',
-      cells: ['','','','','','','B','B','B'],
+      cells: ['', '', '', '', '', '', 'B', 'B', 'B'],
       marks: { B: 'good' }
     },
     chocolate: {
       title: 'Placement Zone',
       subtitle: bonusText || 'Keep in top rows (1-2).',
-      cells: ['T','T','T','','','','','',''],
+      cells: ['T', 'T', 'T', '', '', '', '', '', ''],
       marks: { T: 'good' }
     },
     bread: {
       title: 'Order Priority',
       subtitle: bonusText || 'Put Bread in position #1.',
-      cells: ['#1','','','','??','','','',''],
+      cells: ['#1', '', '', '', 'B', '', '', '', ''],
       marks: { '#1': 'good' }
     },
     bleach: {
       title: 'Glass Cannon',
       subtitle: bonusText || 'Huge ATK, very fragile HP.',
-      cells: ['','','','','??,'','','',''],
-      marks: { '??: 'warn' }
+      cells: ['', '', '', '', '!', '', '', '', ''],
+      marks: { '!': 'warn' }
     },
     pan: {
       title: 'Matchup Alert',
       subtitle: bonusText || 'Strong damage but weak vs Shoes/Jeans.',
-      cells: ['??','','??','','?','','','',''],
-      marks: { '??': 'warn', '??': 'warn' }
+      cells: ['W', '', 'J', '', 'P', '', '', '', ''],
+      marks: { W: 'warn', J: 'warn' }
     },
     pillbox: {
       title: 'Sustain Pattern',
       subtitle: bonusText || 'Kills restore 30% max HP.',
-      cells: ['','+','','+','??','+','','+',''],
+      cells: ['', '+', '', '+', 'P', '+', '', '+', ''],
       marks: { '+': 'good' }
     },
     alcohol: {
       title: 'Space Control',
       subtitle: bonusText || 'Large 3x3 premium unit.',
-      cells: ['X','X','X','X','X','X','X','X','X'],
+      cells: ['X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X'],
       marks: { X: 'good' }
     },
     jeans: {
       title: 'Synergy Setup',
       subtitle: bonusText || 'Pair with Running Shoes for shield.',
-      cells: ['??','','','','??','','','',''],
-      marks: { '??': 'good' }
+      cells: ['J', '', '', '', 'S', '', '', '', ''],
+      marks: { J: 'good' }
     },
     shoes: {
       title: 'Flexible Unit',
@@ -1213,9 +1172,13 @@ function syncRoomConfigFromPresence(players = getPresencePlayers()) {
   const prepDurationSec = PREP_TIME_OPTIONS.includes(adminPresence.prepDurationSec)
     ? adminPresence.prepDurationSec
     : DEFAULT_PREP_TIME_SEC;
+  const maxRounds = ROUND_COUNT_OPTIONS.includes(Number(adminPresence.maxRounds))
+    ? Number(adminPresence.maxRounds)
+    : DEFAULT_MAX_ROUNDS;
 
   roomConfig = {
     prepDurationSec,
+    maxRounds,
     createdBy: adminPresence.roomCreatedBy || adminPresence.id
   };
 
@@ -1268,10 +1231,10 @@ function startPrepCountdown(totalSec) {
   }, 250);
 }
 
-function buildRoundRobinSchedule(participantIds = []) {
+function buildRoundRobinSchedule(participantIds = [], desiredRounds = null) {
   if (participantIds.length < 2) return [];
   const ids = [...participantIds];
-  const rounds = [];
+  const cycle = [];
   const roundsCount = ids.length - 1;
   const half = ids.length / 2;
 
@@ -1282,12 +1245,24 @@ function buildRoundRobinSchedule(participantIds = []) {
       const p2 = ids[ids.length - 1 - i];
       pairings.push([p1, p2]);
     }
-    rounds.push(pairings);
+    cycle.push(pairings);
 
     const fixed = ids[0];
     const rotating = ids.slice(1);
     rotating.unshift(rotating.pop());
     ids.splice(0, ids.length, fixed, ...rotating);
+  }
+
+  if (!desiredRounds || desiredRounds <= cycle.length) {
+    return cycle.slice(0, desiredRounds || cycle.length);
+  }
+
+  const rounds = [];
+  while (rounds.length < desiredRounds) {
+    for (const pairings of cycle) {
+      rounds.push(pairings.map(match => [...match]));
+      if (rounds.length >= desiredRounds) break;
+    }
   }
 
   return rounds;
@@ -1395,21 +1370,6 @@ function updateLobbyUIFromPresence() {
   
   if (players.length > 0) {
     isAdmin = players[0].id === myPresenceId;
-  if (!isAdmin || gameStatus === 'battling' || matchedRound === currentRound || !tournamentState) return;
-
-  const roundMatches = tournamentState.schedule?.[currentRound - 1] || [];
-  if (!roundMatches.length) return;
-
-  const everyoneReady = roundMatches.every(([p1Id, p2Id]) => {
-    const p1Online = !!presenceState[p1Id];
-    const p2Online = !!presenceState[p2Id];
-
-    const p1Ready = !p1Online || !!adminSubmissions[p1Id];
-    const p2Ready = !p2Online || !!adminSubmissions[p2Id];
-    return p1Ready && p2Ready;
-  });
-
-  if (!everyoneReady) return;    
     players.forEach(p => {
       const li = document.createElement('li');
       li.className = 'player-list-item';
@@ -1424,6 +1384,12 @@ function updateLobbyUIFromPresence() {
     if (prepSelect) {
       prepSelect.disabled = !isAdmin;
       prepSelect.value = String(roomConfig.prepDurationSec || DEFAULT_PREP_TIME_SEC);
+    }
+
+    const roundSelect = document.getElementById('round-count-select');
+    if (roundSelect) {
+      roundSelect.disabled = !isAdmin;
+      roundSelect.value = String(roomConfig.maxRounds || DEFAULT_MAX_ROUNDS);
     }
 
     startBtn.style.display = isAdmin ? 'inline-block' : 'none';
@@ -1580,11 +1546,8 @@ async function reportBattleResult(result) {
   // Check locally after a short delay to ensure presence state syncs
   setTimeout(() => {
     if (isAdmin) {
-  if (!isAdmin || isAdvancingRound || !tournamentState) return;
-
-  const expectedIds = tournamentState.participants.map(p => p.id);
-  const allProcessed = expectedIds.every(id => !!adminProcessed[id]);
-  if (allProcessed && expectedIds.length >= 2) {    }
+      console.log('[DEBUG] Admin checking round completion after timeout, adminProcessed:', Object.keys(adminProcessed));
+    }
     checkRoundCompletion();
   }, 500);
 }
@@ -1858,6 +1821,7 @@ window.joinRoom = function() {
   pendingCreateConfig = null;
   roomConfig = {
     prepDurationSec: DEFAULT_PREP_TIME_SEC,
+    maxRounds: DEFAULT_MAX_ROUNDS,
     createdBy: null
   };
   
@@ -1868,6 +1832,7 @@ window.createRoom = function() {
   const nameInput = document.getElementById('player-name-input');
   const roomInput = document.getElementById('room-id-input');
   const prepSelect = document.getElementById('create-prep-time-select');
+  const roundSelect = document.getElementById('create-round-count-select');
 
   playerName = nameInput.value.trim();
   if (!playerName) {
@@ -1880,9 +1845,11 @@ window.createRoom = function() {
 
   const selectedPrep = Number(prepSelect?.value || DEFAULT_PREP_TIME_SEC);
   const prepDurationSec = PREP_TIME_OPTIONS.includes(selectedPrep) ? selectedPrep : DEFAULT_PREP_TIME_SEC;
+  const selectedRounds = Number(roundSelect?.value || DEFAULT_MAX_ROUNDS);
+  const maxRounds = ROUND_COUNT_OPTIONS.includes(selectedRounds) ? selectedRounds : DEFAULT_MAX_ROUNDS;
 
-  pendingCreateConfig = { prepDurationSec };
-  roomConfig = { prepDurationSec, createdBy: null };
+  pendingCreateConfig = { prepDurationSec, maxRounds };
+  roomConfig = { prepDurationSec, maxRounds, createdBy: null };
   initMultiplayer(generated);
 };
 
@@ -1894,6 +1861,7 @@ window.changePrepTime = async function() {
 
   roomConfig = {
     prepDurationSec: selected,
+    maxRounds: roomConfig.maxRounds || DEFAULT_MAX_ROUNDS,
     createdBy: roomConfig.createdBy || myPresenceId
   };
 
@@ -1903,9 +1871,33 @@ window.changePrepTime = async function() {
 
   await sendBroadcast('room_config', {
     prepDurationSec: selected,
+    maxRounds: roomConfig.maxRounds || DEFAULT_MAX_ROUNDS,
     createdBy: roomConfig.createdBy || myPresenceId
   });
   updatePrepTimeDisplay();
+};
+
+window.changeRoundCount = async function() {
+  if (!isAdmin || !channel) return;
+  const roundSelect = document.getElementById('round-count-select');
+  const selected = Number(roundSelect?.value || DEFAULT_MAX_ROUNDS);
+  if (!ROUND_COUNT_OPTIONS.includes(selected)) return;
+
+  roomConfig = {
+    prepDurationSec: roomConfig.prepDurationSec || DEFAULT_PREP_TIME_SEC,
+    maxRounds: selected,
+    createdBy: roomConfig.createdBy || myPresenceId
+  };
+
+  const state = getMyPresenceState();
+  state.maxRounds = selected;
+  await safeTrackPresence(state, 'update round count');
+
+  await sendBroadcast('room_config', {
+    prepDurationSec: roomConfig.prepDurationSec || DEFAULT_PREP_TIME_SEC,
+    maxRounds: selected,
+    createdBy: roomConfig.createdBy || myPresenceId
+  });
 };
 
 function beginAIGame({ tutorial = false } = {}) {
@@ -1965,12 +1957,15 @@ window.requestStartGame = async function() {
       });
     }
 
-    const schedule = buildRoundRobinSchedule(participants.map(p => p.id));
+    const selectedMaxRounds = ROUND_COUNT_OPTIONS.includes(Number(roomConfig.maxRounds))
+      ? Number(roomConfig.maxRounds)
+      : DEFAULT_MAX_ROUNDS;
+    const schedule = buildRoundRobinSchedule(participants.map(p => p.id), selectedMaxRounds);
     tournamentState = {
       roomId: currentRoomId,
       participants,
       schedule,
-      maxRounds: schedule.length
+      maxRounds: selectedMaxRounds
     };
 
     await sendBroadcast('tournament_state', tournamentState);

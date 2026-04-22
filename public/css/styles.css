@@ -325,6 +325,7 @@ body {
   line-height: 1.4;
 }
 
+.login-config-row,
 .lobby-config-row {
   display: flex;
   justify-content: space-between;
@@ -333,6 +334,17 @@ body {
   margin: 8px 0 14px;
   color: #d8d8e5;
   font-size: 13px;
+}
+
+.login-card .login-config-row select {
+  width: auto;
+  flex: 1;
+  min-width: 140px;
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  color: #fff;
+  border-radius: 6px;
+  padding: 6px 8px;
 }
 
 .lobby-config-row select {
