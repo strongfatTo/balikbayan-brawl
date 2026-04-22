@@ -224,6 +224,17 @@ body {
   font-size: 18px;
 }
 .login-card input:focus { border-color: #e94560; outline: none; }
+.login-card select {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: #1a1a2e;
+  border: 2px solid #0f3460;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 16px;
+}
+.login-card select:focus { border-color: #e94560; outline: none; }
 
 .login-actions {
   display: flex;
@@ -314,6 +325,37 @@ body {
   line-height: 1.4;
 }
 
+.lobby-config-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 14px;
+  color: #d8d8e5;
+  font-size: 13px;
+}
+
+.lobby-config-row select {
+  min-width: 120px;
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  color: #fff;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.prep-timer {
+  display: inline-block;
+  margin-bottom: 10px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(240, 192, 64, 0.16);
+  border: 1px solid rgba(240, 192, 64, 0.45);
+  color: #ffd874;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
 /* ── Round Indicator ── */
 .round-indicator {
   background: #e94560;
@@ -330,6 +372,11 @@ body {
 
 /* ── Leaderboard ── */
 .leaderboard-card { max-width: 800px; }
+#leaderboard-summary {
+  color: #d7d7e7;
+  font-size: 15px;
+  margin-top: 8px;
+}
 .leaderboard-table {
   width: 100%;
   border-collapse: collapse;
@@ -351,6 +398,25 @@ body {
 }
 .leaderboard-table tr:last-child td { border-bottom: none; }
 .leaderboard-table tr:nth-child(1) td { color: #f0c040; font-weight: bold; font-size: 1.1em; } /* Gold */
+.leaderboard-table tr.self-row td {
+  background: rgba(78, 204, 163, 0.16);
+}
+.leaderboard-table tr.rank-up {
+  animation: rankRise 0.7s ease;
+}
+.leaderboard-table tr.rank-down {
+  animation: rankDrop 0.7s ease;
+}
+
+@keyframes rankRise {
+  0% { transform: translateY(24px); background: rgba(78, 204, 163, 0.28); }
+  100% { transform: translateY(0); background: transparent; }
+}
+
+@keyframes rankDrop {
+  0% { transform: translateY(-24px); background: rgba(233, 69, 96, 0.25); }
+  100% { transform: translateY(0); background: transparent; }
+}
 
 /* ── Phase: SHOP (3 columns) ── */
 #shop-phase {
