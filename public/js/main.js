@@ -177,6 +177,31 @@ async function handleChannelStatus(status, err, expectedChannel = channel) {
     const myState = getMyPresenceState();
     await safeTrackPresence(myState, 'channel subscribe');
 
+    // After reconnection, delay admin checks to allow presence to sync
+    if (isAdmin && (gameStatus === 'shopping' || gameStatus === 'waiting' || gameStatus === 'battling')) {
+      console.log('[DEBUG] Channel reconnected, scheduling delayed sync check...');
+      setTimeout(async () => {
+        if (!isAdmin) return;
+        // Ask non-admin players who submitted this round to resend their grid,
+        // since broadcasts are not replayed after a reconnect and adminSubmissions
+        // may be missing their entries.
+        if (gameStatus === 'shopping' || gameStatus === 'waiting') {
+          // If admin is in 'waiting' state, they already submitted before the channel dropped.
+          // Re-store their own submission unconditionally since presence hasn't synced yet
+          // at this point and the submitted flag cannot be trusted.
+          if (gameStatus === 'waiting' && !adminSubmissions[myPresenceId] && placedItems.length > 0) {
+            adminSubmissions[myPresenceId] = { items: placedItems, grid: playerGrid, round: currentRound };
+            console.log('[DEBUG] Admin re-stored own submission after reconnect (waiting state)');
+          }
+          console.log('[DEBUG] Admin requesting resubmit from players (reconnect recovery)');
+          await sendBroadcast('request_resubmit', { round: currentRound });
+        }
+        // Force check submissions and processed
+        checkAndMatchPlayers();
+        checkRoundCompletion();
+      }, 2500); // Give presence time to sync after reconnection (other players need time to re-track)
+    }
+
     if (gameStatus === 'login') {
       gameStatus = 'lobby';
       switchPhase('lobby');
@@ -195,13 +220,14 @@ function attachChannelListeners(targetChannel) {
 
       presenceState = targetChannel.presenceState();
       
-      const players = [];
+      // First check room capacity
+      const allPlayers = [];
       for (const key in presenceState) {
-        players.push(presenceState[key][0]);
+        allPlayers.push(presenceState[key][0]);
       }
       
       // Limit room size to configured maximum
-      if (players.length > ROOM_MAX_PLAYERS && !players.find(p => p.id === myPresenceId)) {
+      if (allPlayers.length > ROOM_MAX_PLAYERS && !allPlayers.find(p => p.id === myPresenceId)) {
         alert(`Room is full (Max ${ROOM_MAX_PLAYERS} players).`);
         supabase.removeChannel(targetChannel);
         if (targetChannel === channel) channel = null;
@@ -211,14 +237,38 @@ function attachChannelListeners(targetChannel) {
 
       // Admin checks for game progress triggers
       if (isAdmin && !isAdvancingRound) {
+        // Build players list with admin tracking data
+        const players = [];
+        for (const key in presenceState) {
+          const p = presenceState[key][0];
+          // Cross-reference with admin tracking
+          if (adminSubmissions[p.id]) p.submitted = true;
+          if (adminProcessed[p.id]) p.processedResult = true;
+          players.push(p);
+        }
+        
         const allSubmitted = players.every(p => p.submitted);
         const allProcessed = players.every(p => p.processedResult);
-        const allOnSameRound = players.every(p => p.currentRound === currentRound);
+        
+        // More lenient round check - don't require allOnSameRound
+        // Use admin's currentRound as source of truth
+        const roundMatchCount = players.filter(p => p.currentRound === currentRound).length;
+        const enoughOnSameRound = roundMatchCount >= players.length - 1; // Allow 1 player to be behind
+        
+        console.log('[DEBUG] Sync check:', {
+          gameStatus,
+          allSubmitted,
+          allProcessed,
+          currentRound,
+          roundMatchCount,
+          totalPlayers: players.length,
+          players: players.map(p => ({ name: p.name?.slice(0,6), round: p.currentRound, submitted: p.submitted, processed: p.processedResult }))
+        });
         
         if ((gameStatus === 'shopping' || gameStatus === 'waiting') && allSubmitted && players.length >= 2) {
           console.log('Sync check: All submitted via presence');
           checkAndMatchPlayers();
-        } else if ((gameStatus === 'battling' || gameStatus === 'waiting') && allProcessed && allOnSameRound && players.length >= 2) {
+        } else if ((gameStatus === 'battling' || gameStatus === 'waiting') && allProcessed && enoughOnSameRound && players.length >= 2) {
           console.log('Sync check: All results processed via presence');
           checkRoundCompletion();
         }
@@ -235,21 +285,35 @@ function attachChannelListeners(targetChannel) {
     .on('broadcast', { event: 'submit_grid' }, (envelope) => {
       if (targetChannel !== channel) return;
       const data = envelope.payload;
-      console.log('Player submitted grid:', data.id);
+      console.log('[DEBUG] Admin received submit_grid from:', data.id, 'round:', data.round);
+      
       if (isAdmin) {
-        adminSubmissions[data.id] = { items: data.items, grid: data.grid };
+        // Store OTHER player's submission (not our own - we already stored it)
+        if (data.id !== myPresenceId) {
+          adminSubmissions[data.id] = { 
+            items: data.items, 
+            grid: data.grid,
+            round: data.round || currentRound 
+          };
+          console.log('[DEBUG] Admin stored OTHER player submission, now has:', Object.keys(adminSubmissions).length);
+        } else {
+          console.log('[DEBUG] Admin ignoring own broadcast (already stored)');
+        }
         
         if (presenceState[data.id] && presenceState[data.id][0]) {
             presenceState[data.id][0].submitted = true;
         }
 
         console.log('Admin checking matches after broadcast...');
+        // Pass the round so we only check for current round
         setTimeout(() => checkAndMatchPlayers(), 500);
       }
     })
     .on('broadcast', { event: 'battle_start' }, (envelope) => {
       if (targetChannel !== channel) return;
       const data = envelope.payload;
+      // Reject stale replayed battle_start from a previous round after reconnect
+      if (data.round && data.round !== currentRound) return;
       if (data.targetId === myPresenceId) {
         console.log('Battle start received for me!');
         handleBattleStart(data);
@@ -265,7 +329,7 @@ function attachChannelListeners(targetChannel) {
     .on('broadcast', { event: 'processed_result' }, (envelope) => {
       if (targetChannel !== channel) return;
       const data = envelope.payload;
-      console.log('Player processed result:', data.id);
+      console.log('[DEBUG] Admin received processed_result from:', data.id, 'round:', data.round);
 
       if (presenceState[data.id] && presenceState[data.id][0]) {
         presenceState[data.id][0].processedResult = true;
@@ -284,8 +348,14 @@ function attachChannelListeners(targetChannel) {
         }
       }
 
+      // Only store OTHER player's result (admin already marked self as processed)
       if (isAdmin && data.round === currentRound) {
-        adminProcessed[data.id] = true;
+        if (data.id !== myPresenceId) {
+          adminProcessed[data.id] = true;
+          console.log('[DEBUG] Admin stored OTHER player processed, now has:', Object.keys(adminProcessed).length);
+        } else {
+          console.log('[DEBUG] Admin ignoring own processed result (already stored)');
+        }
 
         console.log('Admin checking round completion after broadcast...');
         setTimeout(() => checkRoundCompletion(), 500);
@@ -296,6 +366,19 @@ function attachChannelListeners(targetChannel) {
       const data = envelope.payload;
       gameStatus = 'results';
       showLeaderboard(data.leaderboard);
+    })
+    .on('broadcast', { event: 'request_resubmit' }, async (envelope) => {
+      if (targetChannel !== channel) return;
+      const data = envelope.payload;
+      // Only non-admin players respond. If we already submitted this round, resend our grid
+      // so the admin can rebuild their adminSubmissions after a reconnect.
+      if (!isAdmin && data.round === currentRound && (gameStatus === 'waiting' || gameStatus === 'shopping')) {
+        const myState = presenceState[myPresenceId]?.[0];
+        if (myState?.submitted) {
+          console.log('[DEBUG] Resubmitting grid on admin request (reconnect recovery), round:', currentRound);
+          await sendBroadcast('submit_grid', { id: myPresenceId, items: placedItems, grid: playerGrid, round: currentRound });
+        }
+      }
     })
     .on('broadcast', { event: 'kick' }, (envelope) => {
       if (targetChannel !== channel) return;
@@ -1241,15 +1324,15 @@ function updateLobbyUIFromPresence() {
   if (players.length > 0) {
     isAdmin = players[0].id === myPresenceId;
     
-    // Auto-clean lobby if no game starts in 30s
+    // Auto-clean lobby if no game starts in 100s
     if (isAdmin && players.length >= 1 && !lobbyTimer) {
-      console.log('Lobby timer started (30s)');
+      console.log('Lobby timer started (100s)');
       lobbyTimer = setTimeout(() => {
         if (gameStatus === 'lobby') {
-          alert('Lobby closed due to inactivity (30s).');
+          alert('Lobby closed due to inactivity (100s).');
           backToStartMenu(true);
         }
-      }, 30000);
+      }, 100000);
     }
     
     players.forEach(p => {
@@ -1288,6 +1371,13 @@ async function handleRoundStart(round, maxRounds) {
   // Hardening: Fallback if values are missing
   const r = round || 1;
   const m = maxRounds || 5;
+
+  // Guard: if we're already mid-round (submitted/waiting/battling), a duplicate
+  // round_start broadcast from a channel reconnect must not wipe state.
+  if (r === currentRound && gameStatus !== 'shopping' && gameStatus !== 'lobby') {
+    console.log('[DEBUG] Ignoring duplicate round_start for round', r, '(already in gameStatus:', gameStatus + ')');
+    return;
+  }
   
   gameStatus = 'shopping';
   currentRound = r;
@@ -1301,19 +1391,68 @@ async function handleRoundStart(round, maxRounds) {
     adminProcessed = {};
   }
   
-  // Reset presence status for the new round
+  // Reset presence status for the new round - ensure sync before clearing
   if (channel && myPresenceId && presenceState[myPresenceId]) {
     const myState = getMyPresenceState();
     myState.submitted = false;
     myState.processedResult = false;
     myState.currentRound = r; // Track current round in presence
     
-    // Give presence a tiny delay to flush previous state updates
+    // Give presence more time to flush previous state updates
     setTimeout(async () => {
       await safeTrackPresence(myState, 'round start');
-    }, 100);
+    }, 300); // Increased from 100ms to 300ms
   }
 
+  // DEBUG: Fallback - if admin hasn't started matching after 8 seconds, force check
+  if (isAdmin) {
+    console.log('[DEBUG] Admin round start - setting fallback check');
+    clearTimeout(window._roundStartFallback);
+    window._roundStartFallback = setTimeout(() => {
+      console.log('[DEBUG] Fallback check triggered for round', currentRound, 'gameStatus:', gameStatus);
+      
+      // Always try to check matches if in shopping/waiting
+      if (gameStatus === 'shopping' || gameStatus === 'waiting') {
+        const players = [];
+        for (const key in presenceState) {
+          const p = presenceState[key][0];
+          if (adminSubmissions[p.id]) p.submitted = true;
+          players.push(p);
+        }
+        const allSubmitted = players.every(p => p.submitted);
+        console.log('[DEBUG] Fallback: checking submissions:', players.length, 'allSubmitted:', allSubmitted, 'adminSubmissions:', Object.keys(adminSubmissions));
+        if (allSubmitted && players.length >= 2) {
+          console.log('[DEBUG] Fallback: All submitted detected, calling checkAndMatchPlayers');
+          checkAndMatchPlayers();
+        } else if (players.length >= 2 && Object.keys(adminSubmissions).length >= 2) {
+          // Force check if admin has data but presence hasn't synced
+          console.log('[DEBUG] Fallback: Admin has submissions but presence not synced, forcing check');
+          checkAndMatchPlayers();
+        }
+      }
+      
+      // Check round completion if in waiting/battling
+      if (gameStatus === 'waiting' || gameStatus === 'battling') {
+        const players = [];
+        for (const key in presenceState) {
+          const p = presenceState[key][0];
+          if (adminProcessed[p.id]) p.processedResult = true;
+          players.push(p);
+        }
+        const allProcessed = players.every(p => p.processedResult);
+        console.log('[DEBUG] Fallback: checking processed:', players.length, 'allProcessed:', allProcessed, 'adminProcessed:', Object.keys(adminProcessed));
+        if (allProcessed && players.length >= 2) {
+          console.log('[DEBUG] Fallback: All processed detected, calling checkRoundCompletion');
+          checkRoundCompletion();
+        } else if (players.length >= 2 && Object.keys(adminProcessed).length >= 2) {
+          // Force check if admin has data but presence hasn't synced
+          console.log('[DEBUG] Fallback: Admin has processed but presence not synced, forcing check');
+          checkRoundCompletion();
+        }
+      }
+    }, 8000); // 8 second fallback
+  }
+  
   const display = document.getElementById('round-display');
   if (display) {
     display.textContent = `Round ${r} / ${m}`;
@@ -1326,6 +1465,12 @@ async function handleRoundStart(round, maxRounds) {
 
 function handleBattleStart(data) {
   if (activeBattleRound === currentRound) return;
+
+  // Guard: reject if enemy grid is missing or empty (stale replayed broadcast)
+  if (!data.enemyGrid || !Array.isArray(data.enemyGrid) || data.enemyGrid.length === 0) {
+    console.warn('[DEBUG] handleBattleStart: rejecting battle_start with empty/missing enemyGrid (stale replay?)');
+    return;
+  }
 
   activeBattleRound = currentRound;
   gameStatus = 'battling';
@@ -1393,6 +1538,12 @@ async function reportBattleResult(result) {
     score: myState.score,
     record: { ...myState.record }
   });
+  
+  // IMMEDIATELY mark self as processed if admin (no waiting for broadcast)
+  if (isAdmin) {
+    adminProcessed[myPresenceId] = true;
+    console.log('[DEBUG] Admin marked self as processed immediately');
+  }
 
   // Show a message to wait for other players
   setTimeout(() => {
@@ -1406,8 +1557,7 @@ async function reportBattleResult(result) {
   // Check locally after a short delay to ensure presence state syncs
   setTimeout(() => {
     if (isAdmin) {
-      adminProcessed[myPresenceId] = true;
-      console.log('Admin reported result, checking round completion locally...');
+      console.log('[DEBUG] Admin checking round completion after timeout, adminProcessed:', Object.keys(adminProcessed));
     }
     checkRoundCompletion();
   }, 500);
@@ -1427,6 +1577,11 @@ function handleBattleBye(message) {
 // ═══════════════════════════════════════════════════════
 async function checkAndMatchPlayers() {
   if (!isAdmin || gameStatus === 'battling' || matchedRound === currentRound) return;
+  
+  // Debounce: if check already running, skip
+  if (window._checkMatchRunning) return;
+  window._checkMatchRunning = true;
+  setTimeout(() => { window._checkMatchRunning = false; }, 1000);
   
   // Give presence state a moment to fully sync if needed, though we track directly via myState too
   const players = [];
@@ -1449,7 +1604,39 @@ async function checkAndMatchPlayers() {
   });
   
   console.log('Checking for matches. Players submitted:', players.filter(p => p.submitted).length, '/', players.length);
-  const allSubmitted = players.every(p => p.submitted);
+  
+  // DEBUG: Log presence state for all players
+  console.log('[DEBUG] Presence state at match check:', players.map(p => ({
+    id: p.id?.slice(0, 8),
+    name: p.name,
+    submitted: p.submitted,
+    currentRound: p.currentRound,
+    hasAdminData: !!adminSubmissions[p.id]
+  })));
+  
+  // Check if we have all submissions via admin tracking (more reliable than presence)
+  // FIX: Count submissions against players in presence - not absolute count
+  // FIX: Use presenceState as source of truth (tracks ALL players including admin)
+  const submissionsWeHave = Object.keys(presenceState).filter(id => 
+    presenceState[id] && presenceState[id][0] && presenceState[id][0].submitted
+  ).length;
+  
+  // FIX: Also check adminSubmissions as fallback (survives channel reconnection)
+  const adminSubsCount = Object.keys(adminSubmissions).length;
+  
+  console.log('[DEBUG] submissionsWeHave:', submissionsWeHave, 'playersInPresence:', players.length, 'adminSubmissions:', adminSubsCount);
+
+  // All submitted if we have submissions for all players OR admin has 2 submissions (handles reconnect case)
+  const allSubmitted = (submissionsWeHave >= players.length && players.length >= 2) || adminSubsCount >= 2;
+  
+  // If not all submitted, retry after a short delay (handles race condition when both click at same time)
+  if (!allSubmitted && players.length >= 2) {
+    const submittedCount = players.filter(p => p.submitted).length;
+    console.log('[DEBUG] Not all submitted yet, retrying in 1s... (' + submittedCount + '/' + players.length + ')');
+    setTimeout(() => checkAndMatchPlayers(), 1000);
+    return;
+  }
+  
   if (allSubmitted && players.length >= 2) {
     matchedRound = currentRound;
     console.log('All players submitted, generating matches...');
@@ -1462,8 +1649,16 @@ async function checkAndMatchPlayers() {
         const p1Data = adminSubmissions[p1.id] || { items: [], grid: [] };
         const p2Data = adminSubmissions[p2.id] || { items: [], grid: [] };
 
-        const b1 = { targetId: p1.id, enemyName: p2.name, enemyItems: p2Data.items, enemyGrid: p2Data.grid };
-        const b2 = { targetId: p2.id, enemyName: p1.name, enemyItems: p1Data.items, enemyGrid: p1Data.grid };
+        // Safety: skip match if either player's grid data is missing — prevents battle.js crash
+        if (!p1Data.grid || p1Data.grid.length === 0 || !p2Data.grid || p2Data.grid.length === 0) {
+          console.warn('[DEBUG] Match skipped: missing grid data for', p1.name, 'or', p2.name, '— waiting for resubmit');
+          matchedRound = null; // allow retry
+          setTimeout(() => checkAndMatchPlayers(), 1500);
+          return;
+        }
+
+        const b1 = { targetId: p1.id, enemyName: p2.name, enemyItems: p2Data.items, enemyGrid: p2Data.grid, round: currentRound };
+        const b2 = { targetId: p2.id, enemyName: p1.name, enemyItems: p1Data.items, enemyGrid: p1Data.grid, round: currentRound };
 
         console.log(`Matching ${p1.name} vs ${p2.name}`);
         await sendBroadcast('battle_start', b1);
@@ -1486,6 +1681,11 @@ async function checkAndMatchPlayers() {
 async function checkRoundCompletion() {
   if (!isAdmin || isAdvancingRound) return;
   
+  // Debounce: if check already running, skip
+  if (window._checkRoundRunning) return;
+  window._checkRoundRunning = true;
+  setTimeout(() => { window._checkRoundRunning = false; }, 1000);
+  
   const players = [];
   for (const key in presenceState) {
     players.push({ ...presenceState[key][0] });
@@ -1504,24 +1704,47 @@ async function checkRoundCompletion() {
       }
   });
   
-  console.log('Checking round completion. Players processed:', players.filter(p => p.processedResult).length, '/', players.length);
-  const allProcessed = players.every(p => p.processedResult);
-  const allOnSameRound = players.every(p => p.currentRound === currentRound);
-  const roundReady = players.every(p => p.currentRound === currentRound || adminProcessed[p.id]);
+console.log('Checking round completion. Players processed:', players.filter(p => p.processedResult).length, '/', players.length);
+  
+  // DEBUG: Log full state
+  console.log('[DEBUG] Round completion state:', players.map(p => ({
+    id: p.id?.slice(0, 8),
+    name: p.name,
+    currentRound: p.currentRound,
+    processedResult: p.processedResult,
+    processedByAdmin: !!adminProcessed[p.id]
+  })));
 
-  if (allProcessed && !roundReady) {
-    console.warn(
-      'Round completion blocked by stale round state:',
-      players.map(p => ({
-        id: p.id,
-        currentRound: p.currentRound,
-        processedResult: p.processedResult,
-        processedByAdmin: !!adminProcessed[p.id]
-      }))
-    );
+  // Use presenceState as source of truth (tracks ALL players including admin)
+  // NOTE: Don't filter by currentRound — presence currentRound can lag after reconnect,
+  // causing playersInCurrentRound to be empty and permanently blocking round completion.
+  // The admin's currentRound variable is the authoritative source.
+  const playersInCurrentRound = players; // all players in the room are in the current round
+  const processedInCurrentRound = playersInCurrentRound.filter(p => p.processedResult);
+  
+  const processedWeHave = Object.keys(presenceState).filter(id => 
+    presenceState[id] && presenceState[id][0] && presenceState[id][0].processedResult
+  ).length;
+
+  // Also count via adminProcessed as fallback — presence can lag after reconnect
+  const adminProcessedCount = Object.keys(adminProcessed).length;
+  
+  console.log('[DEBUG] processedWeHave:', processedWeHave, 'playersInCurrentRound:', playersInCurrentRound.length);
+  console.log('[DEBUG] processedInCurrentRound:', processedInCurrentRound.length);
+
+  // All processed if presence shows everyone done, OR admin tracking confirms all done
+  const allProcessed = (processedWeHave >= playersInCurrentRound.length && playersInCurrentRound.length >= 2)
+    || (adminProcessedCount >= 2 && players.length >= 2);
+  
+  // If not all processed, retry after a short delay (handles race condition when both finish at same time)
+  if (!allProcessed && players.length >= 2) {
+    const processedCount = players.filter(p => p.processedResult).length;
+    console.log('[DEBUG] Not all processed yet, retrying in 1s... (' + processedCount + '/' + players.length + ')');
+    setTimeout(() => checkRoundCompletion(), 1000);
+    return;
   }
-
-  if (allProcessed && roundReady && players.length >= 2) {
+  
+  if (allProcessed && players.length >= 2) {
     isAdvancingRound = true; // Lock to prevent multiple triggers
     
     if (currentRound >= 5) {
@@ -1564,7 +1787,7 @@ async function checkRoundCompletion() {
       handleRoundStart(nextR, 5);
       
       // Release lock after a short delay to allow presence to sync the new round state
-      setTimeout(() => { isAdvancingRound = false; }, 2000);
+      setTimeout(() => { isAdvancingRound = false; }, 2500);
     }
   }
 }
@@ -2519,10 +2742,22 @@ window.startBattle = async function() {
     return;
   }
   if (placedItems.length === 0) return;
+  
+  // Guard: Prevent multiple simultaneous submissions
+  if (window._isSubmitting) {
+    console.log('[DEBUG] Submission already in progress, ignoring');
+    return;
+  }
+  window._isSubmitting = true;
+  
+  // Release guard after a delay
+  setTimeout(() => { window._isSubmitting = false; }, 3000);
+  
   recordOperation('start_battle', { mode: isAIGame ? 'ai' : 'multiplayer', round: currentRound });
   advanceTutorialByAction('start_battle');
   
   if (isAIGame) {
+    window._isSubmitting = false; // Release immediately for AI
     const aiData = await generateAIOpponentGrid();
     gameStatus = 'battling';
     switchPhase('battle');
@@ -2553,14 +2788,23 @@ window.startBattle = async function() {
     console.log('Submitting grid, updating presence...');
     await safeTrackPresence(myState, 'battle submit');
     
-    // Tell the channel we submitted
-    await sendBroadcast('submit_grid', { id: myPresenceId, items: placedItems, grid: playerGrid });
+    // IMMEDIATELY store own submission if admin (no waiting for broadcast)
+    if (isAdmin) {
+      adminSubmissions[myPresenceId] = { 
+        items: placedItems, 
+        grid: playerGrid,
+        round: currentRound 
+      };
+      console.log('[DEBUG] Admin stored own submission immediately');
+    }
+    
+    // Tell the channel we submitted (include round for admin to track)
+    await sendBroadcast('submit_grid', { id: myPresenceId, items: placedItems, grid: playerGrid, round: currentRound });
     
     // Check locally after a short delay to ensure presence state syncs
     setTimeout(() => {
       if (isAdmin) {
-        adminSubmissions[myPresenceId] = { items: placedItems, grid: playerGrid };
-        console.log('Admin submitted, checking for matches locally...');
+        console.log('[DEBUG] Admin checking matches after timeout, adminSubmissions:', Object.keys(adminSubmissions));
       }
       checkAndMatchPlayers(); 
     }, 500);
