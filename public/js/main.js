@@ -1203,6 +1203,23 @@ function updatePrepTimeDisplay(remainingSec = null) {
   el.textContent = `Prep: ${formatPrepTime(Math.max(0, remainingSec))}`;
 }
 
+function setBattleParticipantNames(playerDisplayName, enemyDisplayName) {
+  const playerName = (playerDisplayName || 'You').trim();
+  const enemyName = (enemyDisplayName || 'Rival').trim();
+
+  const playerHeader = document.querySelector('#team-list-player h4');
+  if (playerHeader) playerHeader.textContent = playerName;
+
+  const enemyHeader = document.querySelector('#team-list-enemy h4');
+  if (enemyHeader) enemyHeader.textContent = enemyName;
+
+  const playerBoxLabel = document.querySelector('.player-label');
+  if (playerBoxLabel) playerBoxLabel.textContent = `${playerName} BOX`;
+
+  const enemyBoxLabel = document.querySelector('.enemy-label');
+  if (enemyBoxLabel) enemyBoxLabel.textContent = `${enemyName} BOX`;
+}
+
 function clearPrepCountdown() {
   if (prepCountdownTimer) {
     clearInterval(prepCountdownTimer);
@@ -1482,11 +1499,20 @@ function handleBattleStart(data) {
   gameStatus = 'battling';
   hideOverlay();
   switchPhase('battle');
+  setBattleParticipantNames(playerName, data.enemyName || currentPairing?.opponentName || 'Rival');
   
   import('./battle.js').then(module => {
-     module.startMultiplayerBattle(placedItems, playerGrid, data.enemyItems, data.enemyGrid, async (result) => {
+     module.startMultiplayerBattle(
+       placedItems,
+       playerGrid,
+       data.enemyItems,
+       data.enemyGrid,
+       async (result) => {
        await reportBattleResult(result);
-     });
+       },
+       playerName,
+       data.enemyName || currentPairing?.opponentName || 'Rival'
+     );
   });
 }
 
@@ -2760,10 +2786,19 @@ window.startBattle = async function() {
     const aiData = await generateAIOpponentGrid();
     gameStatus = 'battling';
     switchPhase('battle');
+    setBattleParticipantNames(playerName, 'AI Rival');
     import('./battle.js').then(module => {
-      module.startMultiplayerBattle(placedItems, playerGrid, aiData.items, aiData.grid, (result) => {
+      module.startMultiplayerBattle(
+        placedItems,
+        playerGrid,
+        aiData.items,
+        aiData.grid,
+        (result) => {
         handleAIResult(result);
-      });
+        },
+        playerName,
+        'AI Rival'
+      );
     });
     return;
   }
