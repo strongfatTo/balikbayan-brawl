@@ -37,8 +37,14 @@
     <h2>Welcome</h2>
     <input type="text" id="player-name-input" placeholder="Enter your name..." maxlength="12">
     <input type="text" id="room-id-input" placeholder="Enter Room ID..." maxlength="8">
+    <select id="create-prep-time-select">
+      <option value="60">Prep Time: 1 min</option>
+      <option value="90">Prep Time: 1 min 30 sec</option>
+      <option value="120">Prep Time: 2 mins</option>
+    </select>
     <div class="login-actions">
       <button class="btn btn-fight" onclick="joinRoom()">JOIN ROOM</button>
+      <button class="btn btn-clear" style="width:100%" onclick="createRoom()">CREATE ROOM</button>
       <div class="or-divider">OR</div>
       <button class="btn btn-clear" style="width:100%" onclick="startAIGame()">FIGHT AI</button>
       <button class="btn btn-clear" style="width:100%" onclick="startTutorialMode()">NEW PLAYER GUIDE</button>
@@ -57,6 +63,14 @@
       <h3 id="player-list-title">Players (0/16)</h3>
       <ul id="player-list"></ul>
     </div>
+    <div class="lobby-config-row">
+      <label for="prep-time-select">Round Prep Time</label>
+      <select id="prep-time-select" onchange="changePrepTime()">
+        <option value="60">1 min</option>
+        <option value="90">1 min 30 sec</option>
+        <option value="120">2 mins</option>
+      </select>
+    </div>
     <div id="lobby-status">Waiting for more players...</div>
     <button id="btn-start-game" class="btn btn-fight" style="display:none;" onclick="requestStartGame()">START GAME</button>
   </div>
@@ -69,6 +83,7 @@
       <button class="btn btn-back-mini" onclick="backToStartMenu()">← Menu</button>
       <div class="round-indicator" id="round-display">Round 1 / 5</div>
     </div>
+    <div class="prep-timer" id="prep-timer-display">Prep: 1:00</div>
     <div class="budget-bar">
       <span>Budget</span>
       <span class="money" id="budget-display">$10</span>
@@ -189,7 +204,8 @@
 <!-- LEADERBOARD OVERLAY -->
 <div id="leaderboard-overlay" class="result-overlay">
   <div class="leaderboard-card">
-    <h1>🏆 TOURNAMENT RESULTS 🏆</h1>
+    <h1 id="leaderboard-title">TOURNAMENT RESULTS</h1>
+    <p id="leaderboard-summary"></p>
     <table class="leaderboard-table">
       <thead>
         <tr>

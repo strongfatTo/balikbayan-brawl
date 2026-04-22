@@ -1,7 +1,7 @@
 import { ITEMS, GRID_W, GRID_H, checkMechanic, getEffectiveStats,
          TOOTHPASTE_BASE_PRICE, SELL_REFUND_RATE, RESTOCK_COST,
          STARTING_BUDGET, REWARD_WIN, REWARD_LOSS, REWARD_DRAW,
-         SHOP_OFFERING_COUNT, FIXED_SHOP_SEQUENCE } from './gameData.js';
+         SHOP_OFFERING_COUNT } from './gameData.js';
 
 // ═══════════════════════════════════════════════════════
 //  GAME STATE
@@ -34,6 +34,14 @@ let presenceState = {};
 let myPresenceId = null;
 let lobbyTimer = null;
 let isAdvancingRound = false;
+let prepCountdownTimer = null;
+let prepDeadlineTs = 0;
+let hasSubmittedThisRound = false;
+let currentPairing = null;
+let tournamentState = null;
+let roomConfig = { prepDurationSec: 60, createdBy: null };
+let pendingCreateConfig = null;
+let lastLeaderboardPositions = {};
 let introFinished = false;
 let a2HasPlayed = false;
 let adminSubmissions = {}; // targetId -> { items, grid }
@@ -49,13 +57,13 @@ let lastAIBuildSignature = '';
 let tutorialMode = false;
 let tutorialActive = false;
 let tutorialStepIndex = 0;
-let tutorialFocusedElements = [];
-let tutorialStepBodyClass = '';
-let tutorialRotateAttempts = 0;
-let tutorialShopIndex = 0;  // Tracks position in FIXED_SHOP_SEQUENCE for tutorial mode
+let tutorialLastFocus = null;
 let opLog = [];
 const ROOM_MAX_PLAYERS = 16;
 const ROOM_MIN_PLAYERS_TO_START = 2;
+const PREP_TIME_OPTIONS = [60, 90, 120];
+const DEFAULT_PREP_TIME_SEC = 60;
+const ROUND_LEADERBOARD_MS = 4000;
 
 const GUIDE_KEY = 'bb_seen_guide_v1';
 const HUMAN_AI_STORAGE_KEY = 'bb_human_builds_cache_v1';
@@ -99,7 +107,9 @@ function getMyPresenceState() {
     },
     submitted: existing?.submitted || false,
     processedResult: existing?.processedResult || false,
-    currentRound: existing?.currentRound || currentRound
+    currentRound: existing?.currentRound || currentRound,
+    prepDurationSec: existing?.prepDurationSec || roomConfig.prepDurationSec || DEFAULT_PREP_TIME_SEC,
+    roomCreatedBy: existing?.roomCreatedBy || roomConfig.createdBy || myPresenceId
   };
 }
 
@@ -177,6 +187,19 @@ async function handleChannelStatus(status, err, expectedChannel = channel) {
     const myState = getMyPresenceState();
     await safeTrackPresence(myState, 'channel subscribe');
 
+    if (pendingCreateConfig) {
+      roomConfig = {
+        prepDurationSec: pendingCreateConfig.prepDurationSec,
+        createdBy: myPresenceId
+      };
+      await safeTrackPresence(getMyPresenceState(), 'room create config');
+      await sendBroadcast('room_config', {
+        prepDurationSec: roomConfig.prepDurationSec,
+        createdBy: myPresenceId
+      });
+      pendingCreateConfig = null;
+    }
+
     if (gameStatus === 'login') {
       gameStatus = 'lobby';
       switchPhase('lobby');
@@ -194,11 +217,9 @@ function attachChannelListeners(targetChannel) {
       if (targetChannel !== channel) return;
 
       presenceState = targetChannel.presenceState();
-      
-      const players = [];
-      for (const key in presenceState) {
-        players.push(presenceState[key][0]);
-      }
+      const players = getPresencePlayers();
+
+      syncRoomConfigFromPresence(players);
       
       // Limit room size to configured maximum
       if (players.length > ROOM_MAX_PLAYERS && !players.find(p => p.id === myPresenceId)) {
@@ -209,36 +230,45 @@ function attachChannelListeners(targetChannel) {
         return;
       }
 
-      // Admin checks for game progress triggers
-      if (isAdmin && !isAdvancingRound) {
-        const allSubmitted = players.every(p => p.submitted);
-        const allProcessed = players.every(p => p.processedResult);
-        const allOnSameRound = players.every(p => p.currentRound === currentRound);
-        
-        if ((gameStatus === 'shopping' || gameStatus === 'waiting') && allSubmitted && players.length >= 2) {
-          console.log('Sync check: All submitted via presence');
+      // Admin keeps tournament running even when players disconnect.
+      if (isAdmin && tournamentState && !isAdvancingRound) {
+        setTimeout(() => {
           checkAndMatchPlayers();
-        } else if ((gameStatus === 'battling' || gameStatus === 'waiting') && allProcessed && allOnSameRound && players.length >= 2) {
-          console.log('Sync check: All results processed via presence');
           checkRoundCompletion();
-        }
+        }, 250);
       }
 
       updateLobbyUIFromPresence();
+    })
+    .on('broadcast', { event: 'room_config' }, (envelope) => {
+      if (targetChannel !== channel) return;
+      const data = envelope.payload || {};
+      if (!PREP_TIME_OPTIONS.includes(data.prepDurationSec)) return;
+      roomConfig = {
+        prepDurationSec: data.prepDurationSec,
+        createdBy: data.createdBy || roomConfig.createdBy
+      };
+      updatePrepTimeDisplay();
+    })
+    .on('broadcast', { event: 'tournament_state' }, (envelope) => {
+      if (targetChannel !== channel) return;
+      const data = envelope.payload;
+      if (!data) return;
+      tournamentState = data;
     })
     .on('broadcast', { event: 'round_start' }, (envelope) => {
       if (targetChannel !== channel) return;
       const data = envelope.payload;
       console.log('Received round_start broadcast:', data);
-      handleRoundStart(data.round, data.maxRounds);
+      handleRoundStart(data.round, data.maxRounds, data.prepDurationSec);
     })
     .on('broadcast', { event: 'submit_grid' }, (envelope) => {
       if (targetChannel !== channel) return;
       const data = envelope.payload;
       console.log('Player submitted grid:', data.id);
-      if (isAdmin) {
+      if (isAdmin && tournamentState && data.round === currentRound) {
         adminSubmissions[data.id] = { items: data.items, grid: data.grid };
-        
+
         if (presenceState[data.id] && presenceState[data.id][0]) {
             presenceState[data.id][0].submitted = true;
         }
@@ -266,36 +296,36 @@ function attachChannelListeners(targetChannel) {
       if (targetChannel !== channel) return;
       const data = envelope.payload;
       console.log('Player processed result:', data.id);
+      if (isAdmin && data.round === currentRound && tournamentState) {
+        if (adminProcessed[data.id]) return;
+        adminProcessed[data.id] = { result: data.result };
+        applyRoundResultToTournament(data.id, data.result);
 
-      if (presenceState[data.id] && presenceState[data.id][0]) {
-        presenceState[data.id][0].processedResult = true;
-
-        const parsedScore = Number(data.score);
-        if (Number.isFinite(parsedScore)) {
-          presenceState[data.id][0].score = parsedScore;
+        if (data.opponentId && !presenceState[data.opponentId] && !adminProcessed[data.opponentId]) {
+          const mirrored = data.result === 'win' ? 'loss' : data.result === 'loss' ? 'win' : 'draw';
+          adminProcessed[data.opponentId] = { result: mirrored };
+          applyRoundResultToTournament(data.opponentId, mirrored);
         }
-
-        if (data.record && typeof data.record === 'object') {
-          presenceState[data.id][0].record = {
-            w: Number(data.record.w) || 0,
-            d: Number(data.record.d) || 0,
-            l: Number(data.record.l) || 0
-          };
+        
+        if (presenceState[data.id] && presenceState[data.id][0]) {
+            presenceState[data.id][0].processedResult = true;
         }
-      }
-
-      if (isAdmin && data.round === currentRound) {
-        adminProcessed[data.id] = true;
 
         console.log('Admin checking round completion after broadcast...');
         setTimeout(() => checkRoundCompletion(), 500);
       }
     })
+    .on('broadcast', { event: 'round_leaderboard' }, (envelope) => {
+      if (targetChannel !== channel) return;
+      const data = envelope.payload || {};
+      const headline = data.headline || `Round ${currentRound} Leaderboard`;
+      showLeaderboard(data.leaderboard || [], { headline, includeMovement: true });
+    })
     .on('broadcast', { event: 'tournament_results' }, (envelope) => {
       if (targetChannel !== channel) return;
       const data = envelope.payload;
       gameStatus = 'results';
-      showLeaderboard(data.leaderboard);
+      showLeaderboard(data.leaderboard, { headline: 'TOURNAMENT RESULTS', includeMovement: true });
     })
     .on('broadcast', { event: 'kick' }, (envelope) => {
       if (targetChannel !== channel) return;
@@ -365,25 +395,12 @@ function updateBudgetDisplay() {
 // ═══════════════════════════════════════════════════════
 function restockShop() {
   shopOfferings = [];
-  
-  // Use fixed sequence for tutorial mode, random for regular games
-  if (tutorialMode) {
-    // Pull next 3 items from the fixed sequence (wrap around if needed)
-    for (let i = 0; i < SHOP_OFFERING_COUNT; i++) {
-      const itemId = FIXED_SHOP_SEQUENCE[tutorialShopIndex % FIXED_SHOP_SEQUENCE.length];
-      const item = ITEMS.find(it => it.id === itemId);
-      if (item) shopOfferings.push(item);
-      tutorialShopIndex++;
-    }
-  } else {
-    // Random selection for regular games
-    const availableItems = [...ITEMS];
-    for (let i = 0; i < SHOP_OFFERING_COUNT; i++) {
-      if (availableItems.length === 0) break;
-      const randomIdx = Math.floor(Math.random() * availableItems.length);
-      shopOfferings.push(availableItems[randomIdx]);
-      availableItems.splice(randomIdx, 1);
-    }
+  const availableItems = [...ITEMS];
+  for (let i = 0; i < SHOP_OFFERING_COUNT; i++) {
+    if (availableItems.length === 0) break;
+    const randomIdx = Math.floor(Math.random() * availableItems.length);
+    shopOfferings.push(availableItems[randomIdx]);
+    availableItems.splice(randomIdx, 1);
   }
 }
 
@@ -417,6 +434,12 @@ function init() {
   tournamentScores = { player: 0, rival: 0, record: { w: 0, d: 0, l: 0 } };
   isAdmin = false;
   isAdvancingRound = false;
+  hasSubmittedThisRound = false;
+  currentPairing = null;
+  tournamentState = null;
+  roomConfig = { prepDurationSec: DEFAULT_PREP_TIME_SEC, createdBy: null };
+  pendingCreateConfig = null;
+  lastLeaderboardPositions = {};
   matchedRound = null;
   activeBattleRound = null;
   reportedResultRound = null;
@@ -426,11 +449,18 @@ function init() {
   tutorialActive = false;
   tutorialMode = false;
   tutorialStepIndex = 0;
-  tutorialFocusedElements = [];
-  tutorialStepBodyClass = '';
-  tutorialRotateAttempts = 0;
-  tutorialShopIndex = 0;
+  tutorialLastFocus = null;
   opLog = [];
+  presenceState = {};
+  myPresenceId = null;
+  adminSubmissions = {};
+  adminProcessed = {};
+
+  if (prepCountdownTimer) {
+    clearInterval(prepCountdownTimer);
+    prepCountdownTimer = null;
+  }
+  prepDeadlineTs = 0;
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (lobbyTimer) { clearTimeout(lobbyTimer); lobbyTimer = null; }
   
@@ -779,181 +809,63 @@ function renderItemPopover(item, bonusText = '', isActive = false) {
 
 const tutorialSteps = [
   {
-    id: 'guide_start',
-    title: 'Step 1/7 - Guide Flow',
-    text: 'This guide has two phases: Shop Flow (pick, rotate, place) then Battle Flow (read rules, fight).',
+    title: 'Guide Start',
+    text: 'Welcome! This guide will teach one full flow: pick, rotate, place, and fight.',
     target: '.selection-tip',
     validate: () => true
   },
   {
-    id: 'pick_rotatable_item',
-    title: 'Step 2/7 - Pick A Rotatable Item',
-    text: 'Select an item card that shows an R button. Items with R can be rotated.',
-    target: '.shop-panel',
-    validate: () => !!selectedItem && selectedItem.shapes.length > 1
+    title: 'Pick An Item',
+    text: 'Click any item card in the shop list to select it.',
+    target: '#shop-list',
+    validate: () => !!selectedItem
   },
   {
-    id: 'rotate_shape',
-    title: 'Step 3/7 - Rotate Shape',
-    text: 'Items can be rotated. Press R or click the highlighted R icon 3 times to practice.',
-    target: '#shop-list .item-card.selected .rotate-btn',
-    extraTargets: ['#shop-list .item-card.selected'],
-    validate: () => tutorialRotateAttempts >= 3,
-    stepClass: 'tutorial-step-rotate'
+    title: 'Rotate Shape',
+    text: 'Press R or click the R button on selected item to rotate it.',
+    target: '#shop-list .item-card.selected',
+    validate: () => opLog.some(log => log.type === 'rotate_item')
   },
   {
-    id: 'place_on_grid',
-    title: 'Step 4/7 - Place On Grid',
+    title: 'Place On Grid',
     text: 'Now click the grid to place your selected item.',
     target: '.grid-bg-wrapper',
     validate: () => placedItems.length > 0
   },
   {
-    id: 'row_effects',
-    title: 'Step 5/7 - Row Effects',
-    text: 'Row effects matter. Row 1-2 (top) and Row 4-5 (bottom) can change bonuses and penalties.',
-    target: '.row-indicators',
-    extraTargets: [
-      '.row-indicators .ri:nth-child(1)',
-      '.row-indicators .ri:nth-child(2)',
-      '.row-indicators .ri:nth-child(3)',
-      '.row-indicators .ri:nth-child(4)',
-      '.row-indicators .ri:nth-child(5)'
-    ],
-    validate: () => true,
-    stepClass: 'tutorial-step-row-effects'
+    title: 'Read Rules',
+    text: 'Check Item Rules. They explain top/bottom zones and synergies.',
+    target: '#rules-list',
+    validate: () => true
   },
   {
-    id: 'read_rules',
-    title: 'Step 6/7 - Read Rules',
-    text: 'Check Item Rules here before fighting. They explain row effects and synergies.',
-    target: '#shop-info-btn',
-    validate: () => true,
-    stepClass: 'tutorial-step-read-rules'
-  },
-  {
-    id: 'fight',
-    title: 'Step 7/7 - Fight',
+    title: 'Fight',
     text: 'Press FIGHT to start combat. Tutorial ends after battle starts.',
     target: '#btn-fight',
     validate: () => false,
-    finalAction: 'start_battle',
-    stepClass: 'tutorial-step-fight'
+    finalAction: 'start_battle'
   }
 ];
 
 function clearTutorialFocus() {
-  tutorialFocusedElements.forEach(el => {
-    el.classList.remove('tutorial-focus');
-    el.style.position = '';
-  });
-  tutorialFocusedElements = [];
-  const spotlight = document.getElementById('tutorial-spotlight');
-  if (spotlight) spotlight.style.display = 'none';
-  const overlay = document.querySelector('.tutorial-overlay');
-  if (overlay) overlay.style.clipPath = 'none';
+  if (tutorialLastFocus) tutorialLastFocus.classList.remove('tutorial-focus');
+  tutorialLastFocus = null;
 }
 
-function clearTutorialStepClass() {
-  if (tutorialStepBodyClass) {
-    document.body.classList.remove(tutorialStepBodyClass);
-    tutorialStepBodyClass = '';
-  }
-}
-
-function setTutorialFocus(step) {
+function setTutorialFocus(selector) {
   clearTutorialFocus();
-  if (!step) return;
+  if (!selector) return;
 
-  const selectors = [];
-  if (step.target) selectors.push(step.target);
-  if (Array.isArray(step.extraTargets)) selectors.push(...step.extraTargets);
+  const el = document.querySelector(selector);
+  if (!el) return;
 
-  let primaryEl = null;
-  selectors.forEach((selector) => {
-    if (!selector) return;
-    const el = document.querySelector(selector);
-    if (!el) return;
-
-    // Preserve original position for already-positioned elements
-    const computed = window.getComputedStyle(el);
-    if (computed.position === 'absolute') {
-      el.style.position = 'absolute';
-    } else {
-      el.classList.add('tutorial-focus');
-    }
-    tutorialFocusedElements.push(el);
-    if (!primaryEl) primaryEl = el;
-  });
-
-  // Update spotlight to cover all focused elements
-  updateSpotlight();
+  el.classList.add('tutorial-focus');
+  tutorialLastFocus = el;
 
   const arrow = document.getElementById('tutorial-arrow');
-  if (!primaryEl) {
-    arrow.style.display = 'none';
-    return;
-  }
-
-  arrow.style.display = 'block';
-  const rect = primaryEl.getBoundingClientRect();
+  const rect = el.getBoundingClientRect();
   arrow.style.left = `${Math.max(12, rect.left - 38)}px`;
   arrow.style.top = `${Math.max(16, rect.top + rect.height / 2 - 16)}px`;
-}
-
-function updateSpotlight() {
-  const spotlight = document.getElementById('tutorial-spotlight');
-  const overlay = document.querySelector('.tutorial-overlay');
-  if (!spotlight || tutorialFocusedElements.length === 0) {
-    spotlight.style.display = 'none';
-    if (overlay) overlay.style.clipPath = 'none';
-    return;
-  }
-
-  // Calculate bounding box of all focused elements
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-
-  tutorialFocusedElements.forEach(el => {
-    const rect = el.getBoundingClientRect();
-    minX = Math.min(minX, rect.left);
-    minY = Math.min(minY, rect.top);
-    maxX = Math.max(maxX, rect.right);
-    maxY = Math.max(maxY, rect.bottom);
-  });
-
-  // Add padding
-  const padding = 8;
-  const left = minX - padding;
-  const top = minY - padding;
-  const width = maxX - minX + padding * 2;
-  const height = maxY - minY + padding * 2;
-
-  // Position spotlight element
-  spotlight.style.display = 'block';
-  spotlight.style.left = `${left}px`;
-  spotlight.style.top = `${top}px`;
-  spotlight.style.width = `${width}px`;
-  spotlight.style.height = `${height}px`;
-
-  // Use clip-path on overlay to create hole
-  // The polygon excludes the spotlight area, making overlay dark everywhere except the hole
-  if (overlay) {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    // Create a path around the viewport, cutting out the spotlight rectangle
-    overlay.style.clipPath = `polygon(
-      0% 0%,
-      0% 100%,
-      ${left}px 100%,
-      ${left}px ${top}px,
-      ${left + width}px ${top}px,
-      ${left + width}px ${top + height}px,
-      ${left}px ${top + height}px,
-      ${left}px 100%,
-      100% 100%,
-      100% 0%
-    )`;
-  }
 }
 
 function renderTutorialStep() {
@@ -963,19 +875,12 @@ function renderTutorialStep() {
   document.getElementById('tutorial-title').textContent = step.title;
   document.getElementById('tutorial-text').textContent = step.text;
   document.getElementById('tutorial-next-btn').style.display = step.finalAction ? 'none' : 'inline-flex';
-  clearTutorialStepClass();
-  if (step.stepClass) {
-    document.body.classList.add(step.stepClass);
-    tutorialStepBodyClass = step.stepClass;
-  }
-  setTutorialFocus(step);
+  setTutorialFocus(step.target);
 }
 
 function startTutorialFlow() {
   tutorialActive = true;
   tutorialStepIndex = 0;
-  tutorialRotateAttempts = 0;
-  clearTutorialStepClass();
   document.body.classList.add('tutorial-active');
   document.getElementById('tutorial-overlay').style.display = 'flex';
   renderTutorialStep();
@@ -984,9 +889,7 @@ function startTutorialFlow() {
 function endTutorialFlow() {
   tutorialActive = false;
   tutorialStepIndex = 0;
-  tutorialRotateAttempts = 0;
   clearTutorialFocus();
-  clearTutorialStepClass();
   document.body.classList.remove('tutorial-active');
   document.getElementById('tutorial-overlay').style.display = 'none';
 }
@@ -1056,7 +959,7 @@ window.skipIntro = function() {
 /** Preload the A2 video blob at startup so it's ready when entering the game */
 let a2VideoBlob = null;
 function preloadA2Video() {
-  fetch('assets/videos/A2GIF_transparent.mp4')
+  fetch('assets/videos/A2 .mp4')
     .then(r => r.blob())
     .then(blob => {
       a2VideoBlob = URL.createObjectURL(blob);
@@ -1202,6 +1105,158 @@ function hideItemPopover() {
   popover.classList.remove('show');
 }
 
+function getPresencePlayers() {
+  const players = [];
+  for (const key in presenceState) {
+    players.push(presenceState[key][0]);
+  }
+  return players;
+}
+
+function syncRoomConfigFromPresence(players = getPresencePlayers()) {
+  if (!players.length) return;
+
+  const sorted = [...players].sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt));
+  const adminPresence = sorted[0];
+  if (!adminPresence) return;
+
+  const prepDurationSec = PREP_TIME_OPTIONS.includes(adminPresence.prepDurationSec)
+    ? adminPresence.prepDurationSec
+    : DEFAULT_PREP_TIME_SEC;
+
+  roomConfig = {
+    prepDurationSec,
+    createdBy: adminPresence.roomCreatedBy || adminPresence.id
+  };
+
+  updatePrepTimeDisplay();
+}
+
+function formatPrepTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
+function updatePrepTimeDisplay(remainingSec = null) {
+  const el = document.getElementById('prep-timer-display');
+  if (!el) return;
+
+  if (remainingSec === null) {
+    el.textContent = `Prep: ${formatPrepTime(roomConfig.prepDurationSec || DEFAULT_PREP_TIME_SEC)}`;
+    return;
+  }
+
+  el.textContent = `Prep: ${formatPrepTime(Math.max(0, remainingSec))}`;
+}
+
+function clearPrepCountdown() {
+  if (prepCountdownTimer) {
+    clearInterval(prepCountdownTimer);
+    prepCountdownTimer = null;
+  }
+  prepDeadlineTs = 0;
+}
+
+function startPrepCountdown(totalSec) {
+  clearPrepCountdown();
+  prepDeadlineTs = Date.now() + totalSec * 1000;
+  updatePrepTimeDisplay(totalSec);
+
+  prepCountdownTimer = setInterval(() => {
+    const remainingSec = Math.max(0, Math.ceil((prepDeadlineTs - Date.now()) / 1000));
+    updatePrepTimeDisplay(remainingSec);
+
+    if (remainingSec <= 0) {
+      clearPrepCountdown();
+      if (!isAIGame && (gameStatus === 'shopping' || gameStatus === 'waiting') && !hasSubmittedThisRound) {
+        if (typeof window.startBattle === 'function') {
+          window.startBattle();
+        }
+      }
+    }
+  }, 250);
+}
+
+function buildRoundRobinSchedule(participantIds = []) {
+  if (participantIds.length < 2) return [];
+  const ids = [...participantIds];
+  const rounds = [];
+  const roundsCount = ids.length - 1;
+  const half = ids.length / 2;
+
+  for (let round = 0; round < roundsCount; round++) {
+    const pairings = [];
+    for (let i = 0; i < half; i++) {
+      const p1 = ids[i];
+      const p2 = ids[ids.length - 1 - i];
+      pairings.push([p1, p2]);
+    }
+    rounds.push(pairings);
+
+    const fixed = ids[0];
+    const rotating = ids.slice(1);
+    rotating.unshift(rotating.pop());
+    ids.splice(0, ids.length, fixed, ...rotating);
+  }
+
+  return rounds;
+}
+
+function buildLeaderboardRows() {
+  if (!tournamentState?.participants) return [];
+
+  return tournamentState.participants
+    .filter(p => !p.hidden)
+    .map(p => ({
+      id: p.id,
+      name: p.name,
+      score: p.score,
+      record: `${p.record.w}-${p.record.d}-${p.record.l}`
+    }))
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+}
+
+function applyRoundResultToTournament(participantId, result) {
+  if (!tournamentState?.participants || !participantId || !result) return;
+  const participant = tournamentState.participants.find(p => p.id === participantId);
+  if (!participant) return;
+
+  if (result === 'win') {
+    participant.score += 3;
+    participant.record.w += 1;
+  } else if (result === 'draw') {
+    participant.score += 2;
+    participant.record.d += 1;
+  } else {
+    participant.score += 1;
+    participant.record.l += 1;
+  }
+}
+
+async function applyAIAutoResult(match) {
+  const [p1Id, p2Id] = match;
+  const p1Online = !!presenceState[p1Id];
+  const p2Online = !!presenceState[p2Id];
+
+  if (p1Online && p2Online) return;
+  if (p1Online !== p2Online) return;
+
+  if (!adminProcessed[p1Id]) {
+    const p1Result = 'draw';
+    adminProcessed[p1Id] = { result: p1Result };
+    applyRoundResultToTournament(p1Id, p1Result);
+  }
+
+  if (!adminProcessed[p2Id]) {
+    const p2Result = 'draw';
+    adminProcessed[p2Id] = { result: p2Result };
+    applyRoundResultToTournament(p2Id, p2Result);
+  }
+
+  await sendBroadcast('tournament_state', tournamentState);
+}
+
 // ═══════════════════════════════════════════════════════
 //  MULTIPLAYER LOGIC (Supabase Realtime)
 // ═══════════════════════════════════════════════════════
@@ -1210,12 +1265,22 @@ async function initMultiplayer(roomId) {
   reconnectInProgress = false;
   reconnectAttempt = 0;
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  clearPrepCountdown();
+
+  presenceState = {};
+  adminSubmissions = {};
+  adminProcessed = {};
+  tournamentState = null;
+  hasSubmittedThisRound = false;
+  currentPairing = null;
 
   if (channel) {
     const oldChannel = channel;
     channel = null;
     supabase.removeChannel(oldChannel);
   }
+
+  currentRoomId = roomId;
   createRoomChannel(roomId, false);
 }
 
@@ -1240,17 +1305,8 @@ function updateLobbyUIFromPresence() {
   
   if (players.length > 0) {
     isAdmin = players[0].id === myPresenceId;
-    
-    // Auto-clean lobby if no game starts in 30s
-    if (isAdmin && players.length >= 1 && !lobbyTimer) {
-      console.log('Lobby timer started (30s)');
-      lobbyTimer = setTimeout(() => {
-        if (gameStatus === 'lobby') {
-          alert('Lobby closed due to inactivity (30s).');
-          backToStartMenu(true);
-        }
-      }, 30000);
-    }
+
+    updatePrepTimeDisplay();
     
     players.forEach(p => {
       const li = document.createElement('li');
@@ -1261,6 +1317,12 @@ function updateLobbyUIFromPresence() {
       `;
       list.appendChild(li);
     });
+
+    const prepSelect = document.getElementById('prep-time-select');
+    if (prepSelect) {
+      prepSelect.disabled = !isAdmin;
+      prepSelect.value = String(roomConfig.prepDurationSec || DEFAULT_PREP_TIME_SEC);
+    }
 
     startBtn.style.display = isAdmin ? 'inline-block' : 'none';
     startBtn.disabled = players.length < ROOM_MIN_PLAYERS_TO_START;
@@ -1282,7 +1344,7 @@ window.kickPlayer = function(targetId) {
   }
 };
 
-async function handleRoundStart(round, maxRounds) {
+async function handleRoundStart(round, maxRounds, prepDurationSec = roomConfig.prepDurationSec) {
   console.log('Starting Round:', round, '/', maxRounds);
   
   // Hardening: Fallback if values are missing
@@ -1291,10 +1353,16 @@ async function handleRoundStart(round, maxRounds) {
   
   gameStatus = 'shopping';
   currentRound = r;
+  hasSubmittedThisRound = false;
   isAdvancingRound = false;
   matchedRound = null;
   activeBattleRound = null;
   reportedResultRound = null;
+  currentPairing = null;
+
+  if (PREP_TIME_OPTIONS.includes(prepDurationSec)) {
+    roomConfig.prepDurationSec = prepDurationSec;
+  }
   
   if (isAdmin) {
     adminSubmissions = {};
@@ -1319,31 +1387,31 @@ async function handleRoundStart(round, maxRounds) {
     display.textContent = `Round ${r} / ${m}`;
   }
   
+  document.getElementById('leaderboard-overlay').classList.remove('show');
   hideOverlay();
   switchPhase('shopping');
   resetForNewRound();
+  startPrepCountdown(roomConfig.prepDurationSec || DEFAULT_PREP_TIME_SEC);
 }
 
 function handleBattleStart(data) {
   if (activeBattleRound === currentRound) return;
 
   activeBattleRound = currentRound;
+  currentPairing = {
+    me: myPresenceId,
+    opponentId: data.opponentId || null,
+    opponentName: data.enemyName || 'Rival'
+  };
+  clearPrepCountdown();
   gameStatus = 'battling';
   hideOverlay();
   switchPhase('battle');
   
   import('./battle.js').then(module => {
-     module.startMultiplayerBattle(
-       placedItems,
-       playerGrid,
-       data.enemyItems,
-       data.enemyGrid,
-       async (result) => {
-         await reportBattleResult(result);
-       },
-       playerName || 'You',
-       data.enemyName || 'Rival'
-     );
+     module.startMultiplayerBattle(placedItems, playerGrid, data.enemyItems, data.enemyGrid, async (result) => {
+       await reportBattleResult(result);
+     });
   });
 }
 
@@ -1362,17 +1430,8 @@ async function reportBattleResult(result) {
 
   // Multiplayer logic
   const myState = getMyPresenceState();
-  if (result === 'win') {
-    myState.score += 3;
-    myState.record.w++;
-  } else if (result === 'draw') {
-    myState.score += 2;
-    myState.record.d++;
-  } else {
-    myState.score += 1;
-    myState.record.l++;
-  }
   myState.processedResult = true;
+  myState.submitted = true;
 
   // Post-round money reward (persistent wallet)
   if (result === 'win') {
@@ -1383,15 +1442,15 @@ async function reportBattleResult(result) {
     budget += REWARD_DRAW;
   }
   
-  console.log('Updating presence with score:', myState.score);
+  console.log('Updating presence result flag');
   await safeTrackPresence(myState, 'battle result');
   
-  // Broadcast that we processed our result
+  // Broadcast result to admin so the shared leaderboard stays authoritative.
   await sendBroadcast('processed_result', {
     id: myPresenceId,
     round: currentRound,
-    score: myState.score,
-    record: { ...myState.record }
+    result,
+    opponentId: currentPairing?.opponentId || null
   });
 
   // Show a message to wait for other players
@@ -1406,7 +1465,10 @@ async function reportBattleResult(result) {
   // Check locally after a short delay to ensure presence state syncs
   setTimeout(() => {
     if (isAdmin) {
-      adminProcessed[myPresenceId] = true;
+      if (!adminProcessed[myPresenceId]) {
+        adminProcessed[myPresenceId] = { result };
+        applyRoundResultToTournament(myPresenceId, result);
+      }
       console.log('Admin reported result, checking round completion locally...');
     }
     checkRoundCompletion();
@@ -1426,127 +1488,92 @@ function handleBattleBye(message) {
 //  ADMIN COORDINATION LOGIC
 // ═══════════════════════════════════════════════════════
 async function checkAndMatchPlayers() {
-  if (!isAdmin || gameStatus === 'battling' || matchedRound === currentRound) return;
-  
-  // Give presence state a moment to fully sync if needed, though we track directly via myState too
-  const players = [];
-  for (const key in presenceState) {
-    // Clone the object so we can mutate the submitted flag safely for this check
-    players.push({ ...presenceState[key][0] });
-  }
-  
-  // Ensure we count ourselves as submitted if we just submitted
-  const me = players.find(p => p.id === myPresenceId);
-  if (me && adminSubmissions[myPresenceId]) {
-      me.submitted = true;
-  }
-  
-  // Also cross-reference with adminSubmissions directly as the ultimate source of truth for the admin
-  players.forEach(p => {
-      if (adminSubmissions[p.id]) {
-          p.submitted = true;
-      }
+  if (!isAdmin || gameStatus === 'battling' || matchedRound === currentRound || !tournamentState) return;
+
+  const roundMatches = tournamentState.schedule?.[currentRound - 1] || [];
+  if (!roundMatches.length) return;
+
+  const everyoneReady = roundMatches.every(([p1Id, p2Id]) => {
+    const p1Online = !!presenceState[p1Id];
+    const p2Online = !!presenceState[p2Id];
+
+    const p1Ready = !p1Online || !!adminSubmissions[p1Id];
+    const p2Ready = !p2Online || !!adminSubmissions[p2Id];
+    return p1Ready && p2Ready;
   });
-  
-  console.log('Checking for matches. Players submitted:', players.filter(p => p.submitted).length, '/', players.length);
-  const allSubmitted = players.every(p => p.submitted);
-  if (allSubmitted && players.length >= 2) {
-    matchedRound = currentRound;
-    console.log('All players submitted, generating matches...');
-    const shuffled = [...players].sort(() => Math.random() - 0.5);
-    for (let i = 0; i < shuffled.length; i += 2) {
-      if (i + 1 < shuffled.length) {
-        const p1 = shuffled[i];
-        const p2 = shuffled[i+1];
-        
-        const p1Data = adminSubmissions[p1.id] || { items: [], grid: [] };
-        const p2Data = adminSubmissions[p2.id] || { items: [], grid: [] };
 
-        const b1 = { targetId: p1.id, enemyName: p2.name, enemyItems: p2Data.items, enemyGrid: p2Data.grid };
-        const b2 = { targetId: p2.id, enemyName: p1.name, enemyItems: p1Data.items, enemyGrid: p1Data.grid };
+  if (!everyoneReady) return;
 
-        console.log(`Matching ${p1.name} vs ${p2.name}`);
-        await sendBroadcast('battle_start', b1);
-        await sendBroadcast('battle_start', b2);
+  matchedRound = currentRound;
+  gameStatus = 'battling';
+  clearPrepCountdown();
+  console.log('All round participants are ready (or AI fallback), generating matches...');
 
-        // Trigger locally for admin if admin is one of the players
-        if (p1.id === myPresenceId) handleBattleStart(b1);
-        if (p2.id === myPresenceId) handleBattleStart(b2);
-      } else {
-        // Bye
-        const byePayload = { targetId: shuffled[i].id, message: "No opponent this round. You get a bye!" };
-        console.log(`Bye for ${shuffled[i].name}`);
-        await sendBroadcast('battle_bye', byePayload);
-        if (shuffled[i].id === myPresenceId) handleBattleBye(byePayload.message);
-      }
+  for (const match of roundMatches) {
+    const [p1Id, p2Id] = match;
+    const p1 = tournamentState.participants.find(p => p.id === p1Id);
+    const p2 = tournamentState.participants.find(p => p.id === p2Id);
+    if (!p1 || !p2) continue;
+
+    const p1Online = !!presenceState[p1Id];
+    const p2Online = !!presenceState[p2Id];
+
+    if (!p1Online || !p2Online) {
+      await applyAIAutoResult(match);
+    }
+
+    if (p1Online) {
+      const p2Data = adminSubmissions[p2Id] || await generateAIOpponentGrid();
+      const b1 = {
+        targetId: p1Id,
+        opponentId: p2Id,
+        enemyName: p2.hidden ? 'Rival' : p2.name,
+        enemyItems: p2Data.items || [],
+        enemyGrid: p2Data.grid || Array.from({ length: GRID_H }, () => Array(GRID_W).fill(null))
+      };
+      await sendBroadcast('battle_start', b1);
+      if (p1Id === myPresenceId) handleBattleStart(b1);
+    }
+
+    if (p2Online) {
+      const p1Data = adminSubmissions[p1Id] || await generateAIOpponentGrid();
+      const b2 = {
+        targetId: p2Id,
+        opponentId: p1Id,
+        enemyName: p1.hidden ? 'Rival' : p1.name,
+        enemyItems: p1Data.items || [],
+        enemyGrid: p1Data.grid || Array.from({ length: GRID_H }, () => Array(GRID_W).fill(null))
+      };
+      await sendBroadcast('battle_start', b2);
+      if (p2Id === myPresenceId) handleBattleStart(b2);
     }
   }
 }
 
 async function checkRoundCompletion() {
-  if (!isAdmin || isAdvancingRound) return;
-  
-  const players = [];
-  for (const key in presenceState) {
-    players.push({ ...presenceState[key][0] });
-  }
-  
-  // Ensure we count ourselves as processed if we just processed
-  const me = players.find(p => p.id === myPresenceId);
-  if (me && adminProcessed[myPresenceId]) {
-     me.processedResult = true;
-  }
-  
-  // Cross-reference with adminProcessed directly as the ultimate source of truth
-  players.forEach(p => {
-      if (adminProcessed[p.id]) {
-          p.processedResult = true;
-      }
-  });
-  
-  console.log('Checking round completion. Players processed:', players.filter(p => p.processedResult).length, '/', players.length);
-  const allProcessed = players.every(p => p.processedResult);
-  const allOnSameRound = players.every(p => p.currentRound === currentRound);
-  const roundReady = players.every(p => p.currentRound === currentRound || adminProcessed[p.id]);
+  if (!isAdmin || isAdvancingRound || !tournamentState) return;
 
-  if (allProcessed && !roundReady) {
-    console.warn(
-      'Round completion blocked by stale round state:',
-      players.map(p => ({
-        id: p.id,
-        currentRound: p.currentRound,
-        processedResult: p.processedResult,
-        processedByAdmin: !!adminProcessed[p.id]
-      }))
-    );
-  }
-
-  if (allProcessed && roundReady && players.length >= 2) {
+  const expectedIds = tournamentState.participants.map(p => p.id);
+  const allProcessed = expectedIds.every(id => !!adminProcessed[id]);
+  if (allProcessed && expectedIds.length >= 2) {
     isAdvancingRound = true; // Lock to prevent multiple triggers
-    
-    if (currentRound >= 5) {
-      const leaderboard = players.map(p => {
-        const parsedScore = Number(p.score);
-        const score = Number.isFinite(parsedScore) ? parsedScore : 0;
-        const rec = p.record || {};
-        const w = Number(rec.w) || 0;
-        const d = Number(rec.d) || 0;
-        const l = Number(rec.l) || 0;
 
-        return {
-          name: p.name || 'Unknown Player',
-          score,
-          record: `${w}-${d}-${l}`
-        };
-      }).sort((a, b) => b.score - a.score);
-      
+    const leaderboard = buildLeaderboardRows();
+    await sendBroadcast('round_leaderboard', {
+      round: currentRound,
+      headline: `Round ${currentRound} Leaderboard`,
+      leaderboard
+    });
+    showLeaderboard(leaderboard, { headline: `Round ${currentRound} Leaderboard`, includeMovement: true });
+
+    if (currentRound >= tournamentState.maxRounds) {
       console.log('Tournament over, sending results:', leaderboard);
       await sendBroadcast('tournament_results', { leaderboard });
-      
+
       // Trigger locally for admin
       gameStatus = 'results';
-      showLeaderboard(leaderboard);
-      
+      showLeaderboard(leaderboard, { headline: 'TOURNAMENT RESULTS', includeMovement: true });
+
       // Save winner to DB
       await supabase.from('leaderboard').insert(leaderboard.map(entry => ({
         player_name: entry.name,
@@ -1558,14 +1585,24 @@ async function checkRoundCompletion() {
     } else {
       console.log('All players done with battle, moving to next round...');
       const nextR = currentRound + 1;
-      const payload = { round: nextR, maxRounds: 5 };
-      await sendBroadcast('round_start', payload);
-      // Trigger locally for admin
-      handleRoundStart(nextR, 5);
-      
-      // Release lock after a short delay to allow presence to sync the new round state
-      setTimeout(() => { isAdvancingRound = false; }, 2000);
+      const payload = {
+        round: nextR,
+        maxRounds: tournamentState.maxRounds,
+        prepDurationSec: roomConfig.prepDurationSec
+      };
+
+      setTimeout(async () => {
+        adminSubmissions = {};
+        adminProcessed = {};
+        await sendBroadcast('round_start', payload);
+        handleRoundStart(payload.round, payload.maxRounds, payload.prepDurationSec);
+        setTimeout(() => { isAdvancingRound = false; }, 1200);
+      }, ROUND_LEADERBOARD_MS);
+
+      return;
     }
+
+    isAdvancingRound = false;
   }
 }
 
@@ -1646,26 +1683,45 @@ function resetForNewRound() {
   if (restockBtn) restockBtn.disabled = budget < RESTOCK_COST;
 }
 
-function showLeaderboard(data) {
+function showLeaderboard(data, options = {}) {
   hideOverlay();
   const overlay = document.getElementById('leaderboard-overlay');
+  const title = document.getElementById('leaderboard-title');
+  const summary = document.getElementById('leaderboard-summary');
   const body = document.getElementById('leaderboard-body');
-  body.innerHTML = '';
-  
-  const safeRows = Array.isArray(data) ? data : [];
+  const headline = options.headline || 'TOURNAMENT RESULTS';
+  const includeMovement = !!options.includeMovement;
 
-  safeRows.forEach((entry, idx) => {
-    const parsedScore = Number(entry?.score);
-    const score = Number.isFinite(parsedScore) ? parsedScore : 0;
-    const name = entry?.name || 'Unknown Player';
-    const record = entry?.record || '0-0-0';
+  if (title) title.textContent = headline;
+  body.innerHTML = '';
+
+  const playerIndex = data.findIndex(entry => entry.name === playerName);
+  if (summary) {
+    summary.textContent = playerIndex >= 0
+      ? `You are #${playerIndex + 1} with ${data[playerIndex].score} points.`
+      : '';
+  }
+  
+  data.forEach((entry, idx) => {
+    const previousPos = lastLeaderboardPositions[entry.name];
+    let movementClass = '';
+
+    if (includeMovement && typeof previousPos === 'number') {
+      if (idx < previousPos) movementClass = 'rank-up';
+      else if (idx > previousPos) movementClass = 'rank-down';
+    }
+
+    lastLeaderboardPositions[entry.name] = idx;
 
     const row = document.createElement('tr');
+    row.className = movementClass;
+    if (entry.name === playerName) row.classList.add('self-row');
+
     row.innerHTML = `
       <td>${idx + 1}</td>
-      <td>${name}</td>
-      <td>${score}</td>
-      <td>${record}</td>
+      <td>${entry.name}</td>
+      <td>${entry.score}</td>
+      <td>${entry.record}</td>
     `;
     body.appendChild(row);
   });
@@ -1678,14 +1734,64 @@ window.joinRoom = function() {
   const nameInput = document.getElementById('player-name-input');
   const roomInput = document.getElementById('room-id-input');
   playerName = nameInput.value.trim();
-  currentRoomId = roomInput.value.trim();
+  const nextRoomId = roomInput.value.trim().toUpperCase();
   
-  if (!playerName || !currentRoomId) {
+  if (!playerName || !nextRoomId) {
     alert('Please enter both name and Room ID');
     return;
   }
+
+  pendingCreateConfig = null;
+  roomConfig = {
+    prepDurationSec: DEFAULT_PREP_TIME_SEC,
+    createdBy: null
+  };
   
-  initMultiplayer(currentRoomId);
+  initMultiplayer(nextRoomId);
+};
+
+window.createRoom = function() {
+  const nameInput = document.getElementById('player-name-input');
+  const roomInput = document.getElementById('room-id-input');
+  const prepSelect = document.getElementById('create-prep-time-select');
+
+  playerName = nameInput.value.trim();
+  if (!playerName) {
+    alert('Please enter your name first.');
+    return;
+  }
+
+  const generated = roomInput.value.trim().toUpperCase() || Math.random().toString(36).slice(2, 8).toUpperCase();
+  roomInput.value = generated;
+
+  const selectedPrep = Number(prepSelect?.value || DEFAULT_PREP_TIME_SEC);
+  const prepDurationSec = PREP_TIME_OPTIONS.includes(selectedPrep) ? selectedPrep : DEFAULT_PREP_TIME_SEC;
+
+  pendingCreateConfig = { prepDurationSec };
+  roomConfig = { prepDurationSec, createdBy: null };
+  initMultiplayer(generated);
+};
+
+window.changePrepTime = async function() {
+  if (!isAdmin || !channel) return;
+  const prepSelect = document.getElementById('prep-time-select');
+  const selected = Number(prepSelect?.value || DEFAULT_PREP_TIME_SEC);
+  if (!PREP_TIME_OPTIONS.includes(selected)) return;
+
+  roomConfig = {
+    prepDurationSec: selected,
+    createdBy: roomConfig.createdBy || myPresenceId
+  };
+
+  const state = getMyPresenceState();
+  state.prepDurationSec = selected;
+  await safeTrackPresence(state, 'update prep time');
+
+  await sendBroadcast('room_config', {
+    prepDurationSec: selected,
+    createdBy: roomConfig.createdBy || myPresenceId
+  });
+  updatePrepTimeDisplay();
 };
 
 function beginAIGame({ tutorial = false } = {}) {
@@ -1721,11 +1827,49 @@ window.startTutorialMode = function() {
 
 window.requestStartGame = async function() {
   if (isAdmin && channel) {
-    const payload = { round: 1, maxRounds: 5 };
+    const players = getPresencePlayers().sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt));
+    if (players.length < ROOM_MIN_PLAYERS_TO_START) {
+      alert(`Need at least ${ROOM_MIN_PLAYERS_TO_START} players to start.`);
+      return;
+    }
+
+    const participants = players.map(p => ({
+      id: p.id,
+      name: p.name,
+      score: 0,
+      record: { w: 0, d: 0, l: 0 },
+      hidden: false
+    }));
+
+    if (participants.length % 2 === 1) {
+      participants.push({
+        id: `ai-hidden-${Date.now()}`,
+        name: 'Hidden AI',
+        score: 0,
+        record: { w: 0, d: 0, l: 0 },
+        hidden: true
+      });
+    }
+
+    const schedule = buildRoundRobinSchedule(participants.map(p => p.id));
+    tournamentState = {
+      roomId: currentRoomId,
+      participants,
+      schedule,
+      maxRounds: schedule.length
+    };
+
+    await sendBroadcast('tournament_state', tournamentState);
+
+    const payload = {
+      round: 1,
+      maxRounds: tournamentState.maxRounds,
+      prepDurationSec: roomConfig.prepDurationSec || DEFAULT_PREP_TIME_SEC
+    };
     // Broadcast to others
     await sendBroadcast('round_start', payload);
     // Trigger locally for the admin
-    handleRoundStart(payload.round, payload.maxRounds);
+    handleRoundStart(payload.round, payload.maxRounds, payload.prepDurationSec);
   }
 };
 
@@ -1743,6 +1887,8 @@ window.backToStartMenu = function(force = false) {
   if (force || confirm('Are you sure you want to leave the current game?')) {
     isLeavingRoom = true;
     reconnectInProgress = false;
+    clearPrepCountdown();
+    hasSubmittedThisRound = false;
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -1751,6 +1897,11 @@ window.backToStartMenu = function(force = false) {
       supabase.removeChannel(channel);
       channel = null;
     }
+    presenceState = {};
+    adminSubmissions = {};
+    adminProcessed = {};
+    tournamentState = null;
+    currentPairing = null;
     currentRoomId = null;
     init();
   }
@@ -1887,8 +2038,7 @@ function renderShop() {
 
     // Add info button to shop card
     const shopInfoBtn = document.createElement('div');
-    shopInfoBtn.className = 'info-btn shop-info-btn';
-    shopInfoBtn.id = 'shop-info-btn';
+    shopInfoBtn.className = 'info-btn';
     shopInfoBtn.style.opacity = '1';
     shopInfoBtn.style.position = 'absolute';
     shopInfoBtn.style.top = '4px';
@@ -1964,7 +2114,9 @@ function renderShop() {
       rotateBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (selectedItem && selectedItem.id === item.id) {
-          rotateSelectedItem();
+          selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
+          renderShop();
+          if (lastHoverGx >= 0 && lastHoverGy >= 0) updateHoverPreview(lastHoverGx, lastHoverGy);
         }
       });
       card.appendChild(rotateBtn);
@@ -1997,34 +2149,6 @@ function selectItem(item) {
   }
   renderShop();
   advanceTutorialByAction('select_item');
-}
-
-function rotateSelectedItem() {
-  if (!selectedItem || selectedItem.shapes.length <= 1) return false;
-
-  selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
-  recordOperation('rotate_item', { itemId: selectedItem.id, shapeIdx: selectedShapeIdx });
-
-  if (tutorialActive) {
-    const step = tutorialSteps[tutorialStepIndex];
-    if (step && step.id === 'rotate_shape') {
-      tutorialRotateAttempts += 1;
-    }
-  }
-
-  renderShop();
-  if (lastHoverGx >= 0 && lastHoverGy >= 0) {
-    updateHoverPreview(lastHoverGx, lastHoverGy);
-  }
-  advanceTutorialByAction('rotate_item');
-
-  // Re-apply tutorial focus after renderShop re-renders the DOM
-  if (tutorialActive) {
-    const currentStep = tutorialSteps[tutorialStepIndex];
-    if (currentStep) setTutorialFocus(currentStep);
-  }
-
-  return true;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2518,31 +2642,26 @@ window.startBattle = async function() {
     alert('Place the picked-up item first (or press Esc to cancel move) before fighting.');
     return;
   }
-  if (placedItems.length === 0) return;
+  if (placedItems.length === 0 && isAIGame) return;
   recordOperation('start_battle', { mode: isAIGame ? 'ai' : 'multiplayer', round: currentRound });
   advanceTutorialByAction('start_battle');
   
   if (isAIGame) {
+    clearPrepCountdown();
     const aiData = await generateAIOpponentGrid();
     gameStatus = 'battling';
     switchPhase('battle');
     import('./battle.js').then(module => {
-      module.startMultiplayerBattle(
-        placedItems,
-        playerGrid,
-        aiData.items,
-        aiData.grid,
-        (result) => {
-          handleAIResult(result);
-        },
-        playerName || 'You',
-        'AI Rival'
-      );
+      module.startMultiplayerBattle(placedItems, playerGrid, aiData.items, aiData.grid, (result) => {
+        handleAIResult(result);
+      });
     });
     return;
   }
   
   if (channel && gameStatus === 'shopping') {
+    if (hasSubmittedThisRound) return;
+    hasSubmittedThisRound = true;
     gameStatus = 'waiting';
     showOverlay('Waiting...', 'Sending your box to the rival...');
     
@@ -2554,7 +2673,12 @@ window.startBattle = async function() {
     await safeTrackPresence(myState, 'battle submit');
     
     // Tell the channel we submitted
-    await sendBroadcast('submit_grid', { id: myPresenceId, items: placedItems, grid: playerGrid });
+    await sendBroadcast('submit_grid', {
+      id: myPresenceId,
+      round: currentRound,
+      items: placedItems,
+      grid: playerGrid
+    });
     
     // Check locally after a short delay to ensure presence state syncs
     setTimeout(() => {
@@ -2733,7 +2857,12 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') {
     if (!selectedItem) return;
     e.preventDefault(); // Prevent accidental scroll or other browser defaults
-    rotateSelectedItem();
+    selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
+    recordOperation('rotate_item', { itemId: selectedItem.id, shapeIdx: selectedShapeIdx });
+    renderShop();
+    if (lastHoverGx >= 0 && lastHoverGy >= 0)
+      updateHoverPreview(lastHoverGx, lastHoverGy);
+    advanceTutorialByAction('rotate_item');
   }
 });
 
