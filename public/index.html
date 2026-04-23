@@ -37,19 +37,6 @@
     <h2>Welcome</h2>
     <input type="text" id="player-name-input" placeholder="Enter your name..." maxlength="12">
     <input type="text" id="room-id-input" placeholder="Enter Room ID..." maxlength="8">
-    <select id="create-prep-time-select">
-      <option value="60">Prep Time: 1 min</option>
-      <option value="90">Prep Time: 1 min 30 sec</option>
-      <option value="120">Prep Time: 2 mins</option>
-    </select>
-    <div class="login-config-row">
-      <label for="create-round-count-select">Rounds</label>
-      <select id="create-round-count-select">
-        <option value="3">3 Rounds</option>
-        <option value="4">4 Rounds</option>
-        <option value="5" selected>5 Rounds</option>
-      </select>
-    </div>
     <div class="login-actions">
       <button class="btn btn-fight" onclick="joinRoom()">JOIN ROOM</button>
       <button class="btn btn-clear" style="width:100%" onclick="createRoom()">CREATE ROOM</button>
@@ -104,7 +91,7 @@
       <span>Budget</span>
       <span class="money" id="budget-display">$10</span>
     </div>
-    <div class="selection-tip">Click an item to select, then click grid to place.</div>
+    <div class="selection-tip">Drag an item from shop into the box. Drag again to reposition.</div>
     <div id="shop-list"></div>
     <button class="btn-restock" id="btn-restock" onclick="restockShopBtn()">Restock ($1)</button>
 
@@ -120,7 +107,7 @@
 
   <div class="grid-panel">
     <div class="grid-label">
-      Click item in shop, then click grid to place. Press <kbd>R</kbd> to rotate shape.
+      Drag item cards into the grid. Press <kbd>R</kbd> to rotate selected shape.
     </div>
     <div class="grid-bg-wrapper">
       <!-- A2 video plays behind the grid when entering the game -->

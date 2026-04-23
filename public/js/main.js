@@ -66,6 +66,8 @@ let tutorialStepBodyClass = '';
 let tutorialRotateAttempts = 0;
 let tutorialShopIndex = 0;
 let opLog = [];
+let gridDragState = null;
+let suppressGridClickUntil = 0;
 const ROOM_MAX_PLAYERS = 16;
 const ROOM_MIN_PLAYERS_TO_START = 2;
 const PREP_TIME_OPTIONS = [60, 90, 120];
@@ -924,7 +926,7 @@ const tutorialSteps = [
   {
     id: 'place_on_grid',
     title: 'Step 4/7 - Place On Grid',
-    text: 'Now click the grid to place your selected item.',
+    text: 'Now drag an item from the shop and drop it on the grid.',
     target: '.grid-bg-wrapper',
     validate: () => placedItems.length > 0
   },
@@ -2199,8 +2201,6 @@ window.joinRoom = function() {
 window.createRoom = function() {
   const nameInput = document.getElementById('player-name-input');
   const roomInput = document.getElementById('room-id-input');
-  const prepSelect = document.getElementById('create-prep-time-select');
-  const roundSelect = document.getElementById('create-round-count-select');
 
   playerName = nameInput.value.trim();
   if (!playerName) {
@@ -2211,10 +2211,8 @@ window.createRoom = function() {
   const generated = roomInput.value.trim().toUpperCase() || Math.random().toString(36).slice(2, 8).toUpperCase();
   roomInput.value = generated;
 
-  const selectedPrep = Number(prepSelect?.value || DEFAULT_PREP_TIME_SEC);
-  const prepDurationSec = PREP_TIME_OPTIONS.includes(selectedPrep) ? selectedPrep : DEFAULT_PREP_TIME_SEC;
-  const selectedRounds = Number(roundSelect?.value || DEFAULT_MAX_ROUNDS);
-  const maxRounds = ROUND_COUNT_OPTIONS.includes(selectedRounds) ? selectedRounds : DEFAULT_MAX_ROUNDS;
+  const prepDurationSec = DEFAULT_PREP_TIME_SEC;
+  const maxRounds = DEFAULT_MAX_ROUNDS;
 
   pendingCreateConfig = { prepDurationSec, maxRounds };
   roomConfig = { prepDurationSec, maxRounds, createdBy: null };
@@ -2618,7 +2616,10 @@ function renderShop() {
       card.appendChild(rotateBtn);
     }
 
-    card.addEventListener('click', () => selectItem(item));
+    card.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.info-btn') || e.target.closest('.rotate-btn')) return;
+      beginShopItemDrag(e, item);
+    });
     container.appendChild(card);
   });
 
@@ -2645,6 +2646,184 @@ function selectItem(item) {
   }
   renderShop();
   advanceTutorialByAction('select_item');
+}
+
+function clearGridDragListeners() {
+  window.removeEventListener('pointermove', onGridDragMove);
+  window.removeEventListener('pointerup', onGridDragEnd);
+  window.removeEventListener('pointercancel', onGridDragEnd);
+}
+
+function resetGridDragState() {
+  clearGridDragListeners();
+  if (gridDragState?.ghostEl?.parentNode) {
+    gridDragState.ghostEl.parentNode.removeChild(gridDragState.ghostEl);
+  }
+  gridDragState = null;
+}
+
+function createGridDragGhost(item) {
+  const ghost = document.createElement('div');
+  ghost.className = 'drag-ghost';
+  ghost.innerHTML = item.image
+    ? `<img src="${item.image}" alt="${item.name}">`
+    : `<span>${item.emoji}</span>`;
+  document.body.appendChild(ghost);
+  return ghost;
+}
+
+function updateGridDragHoverFromPoint(clientX, clientY) {
+  if (!gridDragState || !selectedItem) return;
+
+  const target = document.elementFromPoint(clientX, clientY)?.closest('#player-grid .cell[data-x]');
+  if (!target) {
+    gridDragState.dropTarget = null;
+    lastHoverGx = -1;
+    lastHoverGy = -1;
+    clearHoverPreview();
+    return;
+  }
+
+  const gx = Number(target.dataset.x);
+  const gy = Number(target.dataset.y);
+  if (Number.isNaN(gx) || Number.isNaN(gy)) {
+    gridDragState.dropTarget = null;
+    clearHoverPreview();
+    return;
+  }
+
+  const shape = selectedItem.shapes[selectedShapeIdx];
+  const cells = shape.map(([dx, dy]) => ({ x: gx + dx, y: gy + dy }));
+  const valid = cells.every(c =>
+    c.x >= 0 && c.x < GRID_W && c.y >= 0 && c.y < GRID_H && !playerGrid[c.y][c.x]
+  );
+
+  gridDragState.dropTarget = { gx, gy, valid };
+  if (gx !== lastHoverGx || gy !== lastHoverGy) {
+    lastHoverGx = gx;
+    lastHoverGy = gy;
+    updateHoverPreview(gx, gy);
+  }
+}
+
+function onGridDragMove(e) {
+  if (!gridDragState) return;
+
+  const dx = e.clientX - gridDragState.startX;
+  const dy = e.clientY - gridDragState.startY;
+  const dragDistance = Math.hypot(dx, dy);
+
+  if (!gridDragState.active) {
+    if (dragDistance < 8) return;
+
+    gridDragState.active = true;
+
+    if (gridDragState.source === 'shop') {
+      const sameItemSelected = selectedItem && selectedItem.id === gridDragState.item.id;
+      gridDragState.previousSelection = {
+        item: selectedItem,
+        shapeIdx: selectedShapeIdx
+      };
+      selectedItem = gridDragState.item;
+      selectedShapeIdx = sameItemSelected ? selectedShapeIdx : 0;
+      renderShop();
+    } else if (gridDragState.source === 'grid') {
+      if (!movingItemState) {
+        startMovingPlacedItem(gridDragState.occupant);
+      }
+    }
+
+    gridDragState.ghostEl = createGridDragGhost(gridDragState.item);
+  }
+
+  if (gridDragState.ghostEl) {
+    gridDragState.ghostEl.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + 14}px)`;
+  }
+
+  updateGridDragHoverFromPoint(e.clientX, e.clientY);
+}
+
+function onGridDragEnd() {
+  if (!gridDragState) return;
+
+  const state = gridDragState;
+  const wasActive = state.active;
+  const dropTarget = state.dropTarget;
+  resetGridDragState();
+
+  if (!wasActive) {
+    if (state.source === 'shop' && state.item.price <= budget) {
+      selectItem(state.item);
+    }
+    return;
+  }
+
+  clearHoverPreview();
+  lastHoverGx = -1;
+  lastHoverGy = -1;
+
+  if (dropTarget?.valid) {
+    suppressGridClickUntil = Date.now() + 200;
+    onCellClick(dropTarget.gx, dropTarget.gy);
+    return;
+  }
+
+  if (state.source === 'grid') {
+    cancelMovingPlacement(true);
+    return;
+  }
+
+  if (state.source === 'shop') {
+    selectedItem = state.previousSelection?.item || null;
+    selectedShapeIdx = state.previousSelection?.shapeIdx || 0;
+    renderShop();
+  }
+}
+
+function beginShopItemDrag(e, item) {
+  if (dndState.draggingEl || gridDragState || e.button !== 0) return;
+  if (item.price > budget) return;
+
+  e.preventDefault();
+
+  gridDragState = {
+    source: 'shop',
+    item,
+    occupant: null,
+    startX: e.clientX,
+    startY: e.clientY,
+    active: false,
+    dropTarget: null,
+    ghostEl: null,
+    previousSelection: null
+  };
+
+  window.addEventListener('pointermove', onGridDragMove);
+  window.addEventListener('pointerup', onGridDragEnd);
+  window.addEventListener('pointercancel', onGridDragEnd);
+}
+
+function beginGridItemDrag(e, occupant) {
+  if (dndState.draggingEl || gridDragState || e.button !== 0) return;
+  if (selectedItem || movingItemState) return;
+
+  e.preventDefault();
+
+  gridDragState = {
+    source: 'grid',
+    item: occupant.item,
+    occupant,
+    startX: e.clientX,
+    startY: e.clientY,
+    active: false,
+    dropTarget: null,
+    ghostEl: null,
+    previousSelection: null
+  };
+
+  window.addEventListener('pointermove', onGridDragMove);
+  window.addEventListener('pointerup', onGridDragEnd);
+  window.addEventListener('pointercancel', onGridDragEnd);
 }
 
 // ????????????????????????????????????????????????????????
@@ -2734,7 +2913,17 @@ function buildGrid() {
     lastHoverGx = -1; lastHoverGy = -1;
     clearHoverPreview();
   });
+  grid.addEventListener('pointerdown', (e) => {
+    const t = e.target.closest('.cell[data-x]');
+    if (!t) return;
+    const gx = parseInt(t.dataset.x, 10);
+    const gy = parseInt(t.dataset.y, 10);
+    const occupant = playerGrid[gy][gx];
+    if (!occupant) return;
+    beginGridItemDrag(e, occupant);
+  });
   grid.addEventListener('click', (e) => {
+    if (Date.now() < suppressGridClickUntil) return;
     const t = e.target.closest('.cell[data-x]');
     if (!t) return;
     onCellClick(parseInt(t.dataset.x), parseInt(t.dataset.y));
@@ -3317,12 +3506,7 @@ function updateHoverPreview(gx, gy) {
 }
 
 function onCellClick(gx, gy) {
-  const occupant = playerGrid[gy][gx];
-
   if (!selectedItem) {
-    if (occupant) {
-      startMovingPlacedItem(occupant);
-    }
     return;
   }
 

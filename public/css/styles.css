@@ -504,6 +504,7 @@ body {
   display: flex;
   gap: 14px;
   align-items: center;
+  touch-action: none;
 }
 .item-card:hover { border-color: #e94560; transform: translateX(4px); }
 .item-card.selected { border-color: #4ecca3; background: #1a2a4a; box-shadow: 0 0 16px rgba(78,204,163,0.3); }
@@ -1588,6 +1589,40 @@ body.tutorial-active.tutorial-step-rotate .item-card.selected .rotate-btn {
 /* item-card needs position:relative for rotate btn */
 .item-card { position: relative; }
 
+.drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 58px;
+  height: 58px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(12, 24, 46, 0.9);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+  pointer-events: none;
+  transform: translate(-9999px, -9999px);
+}
+
+.drag-ghost img {
+  width: 80%;
+  height: 80%;
+  object-fit: contain;
+}
+
+.drag-ghost span {
+  font-size: 34px;
+  line-height: 1;
+}
+
+#player-grid .cell {
+  touch-action: none;
+}
+
 /* scrollbar */
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: #0a0a1a; }
@@ -1662,5 +1697,130 @@ body.tutorial-active.tutorial-step-rotate .item-card.selected .rotate-btn {
 
   .battle-log-container {
     margin-top: 16px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .phase-container {
+    min-height: auto;
+    align-items: flex-start;
+    padding: 12px;
+  }
+
+  #shop-phase {
+    grid-template-columns: 1fr;
+    max-width: 100%;
+    padding: 10px;
+    gap: 12px;
+  }
+
+  .shop-panel,
+  .grid-panel,
+  .rules-panel-inline {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .grid-bg-wrapper {
+    width: min(92vw, 440px);
+    height: min(92vw, 440px);
+  }
+
+  .grid-container {
+    width: 100%;
+    height: 100%;
+  }
+
+  .box-grid {
+    width: 100%;
+    height: 100%;
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(5, 1fr);
+  }
+
+  .box-grid .cell {
+    width: auto;
+    height: auto;
+    font-size: clamp(20px, 6vw, 34px);
+  }
+
+  .row-indicators {
+    display: none;
+  }
+
+  .prepare-team-container {
+    max-width: 100%;
+  }
+
+  .action-bar {
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .action-bar .btn {
+    flex: 1 1 170px;
+  }
+}
+
+@media (max-width: 768px) {
+  .header {
+    padding: 12px;
+  }
+
+  .header h1 {
+    font-size: 30px;
+    letter-spacing: 1.5px;
+  }
+
+  .header p {
+    font-size: 13px;
+  }
+
+  .login-card,
+  .lobby-card,
+  .leaderboard-card {
+    padding: 22px;
+    max-width: 100%;
+  }
+
+  .btn {
+    font-size: 16px;
+    padding: 12px 18px;
+  }
+
+  .shop-header-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .round-indicator {
+    font-size: 12px;
+    padding: 6px 12px;
+  }
+
+  .selection-tip,
+  .grid-label {
+    font-size: 13px;
+  }
+
+  .stat-box {
+    min-width: 90px;
+    padding: 8px 12px;
+  }
+
+  .stat-box .value {
+    font-size: 20px;
+  }
+
+  .placed-item-tag {
+    width: 52px;
+    height: 52px;
+  }
+
+  .leaderboard-table th,
+  .leaderboard-table td {
+    padding: 8px;
+    font-size: 12px;
   }
 }
