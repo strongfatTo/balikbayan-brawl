@@ -1592,3 +1592,75 @@ body.tutorial-active.tutorial-step-rotate .item-card.selected .rotate-btn {
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: #0a0a1a; }
 ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+
+@media (max-width: 900px) {
+  #battle-phase {
+    padding: 12px;
+  }
+
+  .battle-main-area {
+    flex-direction: column;
+    gap: 12px;
+    padding: 0;
+  }
+
+  .battle-stage-container {
+    width: 100%;
+  }
+
+  .team-list {
+    width: 100%;
+  }
+
+  .battle-stage {
+    height: min(42vh, 260px);
+  }
+
+  .battle-sprite {
+    width: 72px;
+    height: 72px;
+    bottom: 44px;
+  }
+
+  .battle-sprite .sprite-emoji {
+    width: 44px;
+    height: 44px;
+    font-size: 44px;
+  }
+
+  .battle-sprite .sprite-name {
+    font-size: 10px;
+  }
+
+  .battle-sprite .hp-bar-bg {
+    width: 56px;
+  }
+
+  .battle-sprite.player-sprite {
+    left: 8%;
+  }
+
+  .battle-sprite.enemy-sprite {
+    right: 8%;
+  }
+
+  .battle-boxes {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .battle-grid {
+    grid-template-columns: repeat(5, 42px);
+    grid-template-rows: repeat(5, 42px);
+  }
+
+  .battle-grid .cell {
+    width: 42px;
+    height: 42px;
+    font-size: 18px;
+  }
+
+  .battle-log-container {
+    margin-top: 16px;
+  }
+}

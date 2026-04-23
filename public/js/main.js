@@ -2048,6 +2048,10 @@ function switchPhase(phase) {
   document.getElementById('shop-phase').style.display = phase === 'shopping' ? 'grid' : 'none';
   document.getElementById('battle-phase').style.display = phase === 'battle' ? 'block' : 'none';
 
+  if (phase === 'battle') {
+    window.scrollTo(0, 0);
+  }
+
   // Scene flow: when entering the shop phase, play A2 behind the grid
   if (phase === 'shopping') {
     const gridWrapper = document.querySelector('.grid-bg-wrapper');
