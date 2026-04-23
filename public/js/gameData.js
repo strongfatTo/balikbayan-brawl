@@ -34,6 +34,8 @@ export const ITEMS = [
     price: TOOTHPASTE_BASE_PRICE, hp: 8, atk: 6,
     shapes: [[[0,0]]],
     colorClass: 'color-toothpaste',
+    image: 'assets/images/Toothpaste .png',
+    avatarImage: 'assets/images/Toothpaste Avatar.png',
     desc: 'Synergizes with Shampoo for +5 ATK',
     mechanic: { type: 'synergy', partner: 'shampoo', bonus: { atk: 5 } }
   },
@@ -42,6 +44,8 @@ export const ITEMS = [
     price: 1, hp: 12, atk: 10,
     shapes: [[[0,0],[1,0]], [[0,0],[0,1]]],
     colorClass: 'color-shoes',
+    image: 'assets/images/Shoes.png',
+    avatarImage: 'assets/images/Shoes Avatar.png',
     desc: 'Pure filler. No special effects.',
     mechanic: null
   },
@@ -50,6 +54,8 @@ export const ITEMS = [
     price: 1, hp: 20, atk: 8,
     shapes: [[[0,0],[1,0],[2,0]], [[0,0],[0,1],[0,2]]],
     colorClass: 'color-shampoo',
+    image: 'assets/images/Shampoo.png',
+    avatarImage: 'assets/images/Shampoo Avatar.png',
     desc: 'Synergy core for Toothpaste.',
     mechanic: { type: 'synergy-partner', partner: 'toothpaste' }
   },
@@ -60,6 +66,8 @@ export const ITEMS = [
       [[0,0],[1,0],[0,1],[1,1]]
     ],
     colorClass: 'color-spam',
+    image: 'assets/images/Luncheon Meat.png',
+    avatarImage: 'assets/images/Luncheon meat Avatar.png',
     desc: '30% self-HP if NOT in Bottom Section',
     mechanic: { type: 'row-penalty', validRows: [0,1], penalty: { hp: 0.30 }, label: 'Bottom Zone OK', badLabel: '30% self-HP!' }
   },
@@ -73,6 +81,8 @@ export const ITEMS = [
       [[0,0],[1,0],[2,0],[0,1],[0,2],[1,2],[2,2]]  // ### / #xx / ###
     ],
     colorClass: 'color-jeans',
+    image: 'assets/images/Jeans.png',
+    avatarImage: 'assets/images/Jeans Avatar.png',
     desc: 'With Shoes &rarr; +20 Shield',
     mechanic: { type: 'synergy', partner: 'shoes', bonus: { shield: 20 }, label: '+20 Shield' }
   },
@@ -84,6 +94,8 @@ export const ITEMS = [
       [[0,0],[1,0],[2,0],[0,1],[1,1],[2,1]]
     ],
     colorClass: 'color-chocolate',
+    image: 'assets/images/Chocolate .png',
+    avatarImage: 'assets/images/Chocolate Avatar.png',
     desc: '-50% self-ATK if NOT in Row 1 or 2',
     mechanic: { type: 'row-penalty', validRows: [3,4], penalty: { atk: 0.50 }, label: 'Top Zone OK', badLabel: '-50% self-ATK' }
   },
@@ -96,6 +108,8 @@ export const ITEMS = [
       [[0,0],[1,0]]    // horizontal 2x1
     ],
     colorClass: 'color-bread',
+    image: 'assets/images/Bread.png',
+    avatarImage: 'assets/images/Bread Avatar.png',
     desc: '2x ATK when in fight position #1',
     mechanic: { type: 'first-position', label: '2x ATK (1st!)', badLabel: 'Not 1st' }
   },
@@ -104,6 +118,8 @@ export const ITEMS = [
     price: 3, hp: 1, atk: 99,
     shapes: [[[0,0]]],
     colorClass: 'color-bleach',
+    image: 'assets/images/Hot Sauce .png',
+    avatarImage: 'assets/images/Hot sauce Avatar.png',
     desc: 'Glass cannon burst, but dies after one hit (HP=1)',
     mechanic: { type: 'glass-cannon', label: 'Glass Cannon' }
   },
@@ -117,6 +133,8 @@ export const ITEMS = [
       [[0,0],[1,0],[0,1],[1,1],[1,2]]  // x# / ## / ##
     ],
     colorClass: 'color-pan',
+    image: 'assets/images/Pan.png',
+    avatarImage: 'assets/images/Pan Avatar.png',
     desc: '3x ATK, but takes 3x damage from Shoes/Jeans',
     mechanic: { type: 'type-weakness', weakTo: ['shoes', 'jeans'], label: '3x ATK', badLabel: 'Weak to Shoes/Jeans' }
   },
@@ -130,6 +148,8 @@ export const ITEMS = [
       [[1,0],[1,1],[0,1],[1,2]]      // T pointing left  (fixed: was duplicate)
     ],
     colorClass: 'color-pillbox',
+    image: 'assets/images/Pill box.png',
+    avatarImage: 'assets/images/Pill box Avatar.png',
     desc: 'Heals 30% max HP after killing an enemy',
     mechanic: { type: 'on-kill-heal', healPct: 0.30, label: 'Heals 30% on kill' }
   },
@@ -143,6 +163,8 @@ export const ITEMS = [
       [[1,0],[2,0],[1,1],[1,2],[2,1],[0,1],[2,2]]  // x## / ### / x##
     ],
     colorClass: 'color-alcohol',
+    image: 'assets/images/Beer.png',
+    avatarImage: 'assets/images/Beer Avatar.png',
     desc: 'Very strong premium unit with a 3x3 patterned footprint.',
     mechanic: null
   }

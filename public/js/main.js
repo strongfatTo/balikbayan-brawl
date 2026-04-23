@@ -39,7 +39,10 @@ let adminSubmissions = {};
 let adminProcessed = {};
 let lobbyTimer = null;
 let prepCountdownTimer = null;
+let leaderboardCountdownTimer = null;
+let battleLeaveRecoveryTimer = null;
 let prepDeadlineTs = 0;
+let leaderboardCountdownDeadlineTs = 0;
 let introFinished = false;
 let a2HasPlayed = false;
 let gridBuilt = false;
@@ -52,6 +55,8 @@ let reconnectTimer = null;
 let reconnectAttempt = 0;
 let reconnectInProgress = false;
 let lastAIBuildSignature = '';
+let aiTakeoverSlots = {};
+let lastPresenceSnapshot = {};
 let pendingCreateConfig = null;
 let tutorialMode = false;
 let tutorialActive = false;
@@ -64,7 +69,7 @@ const PREP_TIME_OPTIONS = [60, 90, 120];
 const ROUND_COUNT_OPTIONS = [3, 4, 5];
 const DEFAULT_PREP_TIME_SEC = 60;
 const DEFAULT_MAX_ROUNDS = 5;
-const ROUND_LEADERBOARD_MS = 4000;
+const ROUND_LEADERBOARD_MS = 10000;
 
 const GUIDE_KEY = 'bb_seen_guide_v1';
 const HUMAN_AI_STORAGE_KEY = 'bb_human_builds_cache_v1';
@@ -248,6 +253,8 @@ function attachChannelListeners(targetChannel) {
       presenceState = targetChannel.presenceState();
 
       const players = getPresencePlayers();
+      syncAiTakeoverSlotsFromPresence(players);
+      refreshBattleTakeoverState();
 
       syncRoomConfigFromPresence(players);
       
@@ -337,7 +344,7 @@ function attachChannelListeners(targetChannel) {
         if (adminProcessed[data.id]) return;
         adminProcessed[data.id] = { result: data.result };
         applyRoundResultToTournament(data.id, data.result);
-        if (data.opponentId && !presenceState[data.opponentId] && !adminProcessed[data.opponentId]) {
+        if (data.opponentId && !isPlayerOnline(data.opponentId) && !adminProcessed[data.opponentId]) {
           const mirrored = data.result === 'win' ? 'loss' : data.result === 'loss' ? 'win' : 'draw';
           adminProcessed[data.opponentId] = { result: mirrored };
           applyRoundResultToTournament(data.opponentId, mirrored);
@@ -501,9 +508,13 @@ function init() {
   tutorialLastFocus = null;
   opLog = [];
   presenceState = {};
+  aiTakeoverSlots = {};
+  lastPresenceSnapshot = {};
   myPresenceId = null;
   adminSubmissions = {};
   adminProcessed = {};
+  const roundDisplay = document.getElementById('round-display');
+  if (roundDisplay) roundDisplay.textContent = `Round 1 / ${roomConfig.maxRounds || DEFAULT_MAX_ROUNDS}`;
 
   if (prepCountdownTimer) {
     clearInterval(prepCountdownTimer);
@@ -1017,7 +1028,7 @@ function preloadA2Video() {
     .catch(err => console.error('[DEBUG] A2 preload failed:', err));
 }
 
-/** Play A2 video behind the grid; when it ends, switch to P1 static image and fade in UI */
+/** Play A2 video behind the grid; when it ends, switch to the shop background image and fade in UI */
 function playGridOpeningVideo() {
   const video = document.getElementById('grid-bg-video');
   const img = document.getElementById('grid-bg-image');
@@ -1057,14 +1068,14 @@ function playGridOpeningVideo() {
         : 2000;
       console.log('[DEBUG] setting end timer for', videoDuration, 'ms');
       setTimeout(() => {
-        console.log('[DEBUG] end timer: calling showP1Background and revealShopUI');
-        showP1Background();
+        console.log('[DEBUG] end timer: calling showShopBackground and revealShopUI');
+        showShopBackground();
         revealShopUI();
         console.log('[DEBUG] end timer done');
       }, videoDuration);
     }).catch((err) => {
       console.error('[DEBUG] video play() rejected:', err);
-      showP1Background();
+      showShopBackground();
       revealShopUI();
       if (gridWrapper) gridWrapper.classList.add('grid-visible');
     });
@@ -1081,19 +1092,19 @@ function playGridOpeningVideo() {
 
   video.onerror = () => {
     console.error('[DEBUG] video onerror:', video.error);
-    showP1Background();
+    showShopBackground();
     revealShopUI();
     if (gridWrapper) gridWrapper.classList.add('grid-visible');
   };
 }
 
-/** Show P1 static background and hide A2 video */
-function showP1Background() {
+/** Show the shop's static background and hide A2 video */
+function showShopBackground() {
   const video = document.getElementById('grid-bg-video');
   const img = document.getElementById('grid-bg-image');
   if (!video || !img) return;
 
-  console.log('[DEBUG] showP1Background: hiding video, showing img');
+  console.log('[DEBUG] showShopBackground: hiding video, showing img');
   video.style.display = 'none';
   img.style.display = '';
 }
@@ -1148,6 +1159,69 @@ function hideOverlay() {
   document.getElementById('result-overlay').classList.remove('show');
 }
 
+function clearLeaderboardCountdown() {
+  if (leaderboardCountdownTimer) {
+    clearInterval(leaderboardCountdownTimer);
+    leaderboardCountdownTimer = null;
+  }
+  leaderboardCountdownDeadlineTs = 0;
+}
+
+function clearBattleLeaveRecovery() {
+  if (battleLeaveRecoveryTimer) {
+    clearTimeout(battleLeaveRecoveryTimer);
+    battleLeaveRecoveryTimer = null;
+  }
+}
+
+function scheduleBattleLeaveRecovery() {
+  clearBattleLeaveRecovery();
+  if (gameStatus !== 'battling' || activeBattleRound !== currentRound || !currentPairing) return;
+  if (isPlayerOnline(currentPairing.opponentId)) return;
+
+  battleLeaveRecoveryTimer = setTimeout(() => {
+    battleLeaveRecoveryTimer = null;
+    if (gameStatus === 'battling' && activeBattleRound === currentRound && currentPairing && !isPlayerOnline(currentPairing.opponentId) && reportedResultRound !== currentRound) {
+      reportBattleResult('win');
+    }
+  }, 6000);
+}
+
+function cleanupRoomOnUnload() {
+  isLeavingRoom = true;
+  clearPrepCountdown();
+  clearLeaderboardCountdown();
+  clearBattleLeaveRecovery();
+
+  if (channel) {
+    try {
+      supabase.removeChannel(channel);
+    } catch (err) {
+      console.warn('Failed to remove realtime channel during unload:', err);
+    }
+    channel = null;
+  }
+}
+
+function startLeaderboardCountdown(summaryEl, baseText, totalMs) {
+  clearLeaderboardCountdown();
+  if (!summaryEl || totalMs <= 0) return;
+
+  leaderboardCountdownDeadlineTs = Date.now() + totalMs;
+
+  const updateCountdown = () => {
+    const remainingSec = Math.max(0, Math.ceil((leaderboardCountdownDeadlineTs - Date.now()) / 1000));
+    summaryEl.textContent = `${baseText ? `${baseText} ` : ''}Next round in ${remainingSec}s.`;
+
+    if (remainingSec <= 0) {
+      clearLeaderboardCountdown();
+    }
+  };
+
+  updateCountdown();
+  leaderboardCountdownTimer = setInterval(updateCountdown, 250);
+}
+
 function hideItemPopover() {
   const popover = document.getElementById('item-popover');
   if (!popover) return;
@@ -1157,9 +1231,88 @@ function hideItemPopover() {
 function getPresencePlayers() {
   const players = [];
   for (const key in presenceState) {
-    players.push(presenceState[key][0]);
+    const player = presenceState[key]?.[0];
+    if (player) players.push(player);
   }
   return players;
+}
+
+function clonePresencePlayer(player) {
+  if (!player) return null;
+
+  return {
+    ...player,
+    record: {
+      w: player.record?.w || 0,
+      d: player.record?.d || 0,
+      l: player.record?.l || 0
+    }
+  };
+}
+
+function getLobbyPlayers() {
+  const onlinePlayers = getPresencePlayers().map(clonePresencePlayer).filter(Boolean);
+  const takeoverPlayers = Object.values(aiTakeoverSlots)
+    .map(clonePresencePlayer)
+    .filter(player => player && (!presenceState[player.id] || presenceState[player.id].length === 0));
+
+  return [...onlinePlayers, ...takeoverPlayers].sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt));
+}
+
+function getLobbyDisplayName(player) {
+  if (!player) return 'Rival';
+  return player.aiControlled ? `AI ${player.name}` : player.name;
+}
+
+function isPlayerOnline(playerId) {
+  return Array.isArray(presenceState[playerId]) && presenceState[playerId].length > 0;
+}
+
+function syncAiTakeoverSlotsFromPresence(players = getPresencePlayers()) {
+  const nextSnapshot = {};
+  players.forEach(player => {
+    nextSnapshot[player.id] = clonePresencePlayer(player);
+  });
+
+  for (const previousId of Object.keys(lastPresenceSnapshot)) {
+    if (!nextSnapshot[previousId] && lastPresenceSnapshot[previousId]) {
+      aiTakeoverSlots[previousId] = {
+        ...lastPresenceSnapshot[previousId],
+        aiControlled: true
+      };
+      if (gameStatus === 'battling' && activeBattleRound === currentRound && currentPairing && currentPairing.opponentId === previousId) {
+        refreshBattleTakeoverState();
+        scheduleBattleLeaveRecovery();
+      }
+    }
+  }
+
+  for (const currentId of Object.keys(nextSnapshot)) {
+    if (aiTakeoverSlots[currentId]) {
+      delete aiTakeoverSlots[currentId];
+    }
+  }
+
+  lastPresenceSnapshot = nextSnapshot;
+}
+
+function refreshBattleTakeoverState() {
+  if (gameStatus !== 'battling' || activeBattleRound !== currentRound || !currentPairing) return;
+
+  const takeoverPlayer = aiTakeoverSlots[currentPairing.opponentId];
+  if (!takeoverPlayer) return;
+
+  const takeoverName = getLobbyDisplayName(takeoverPlayer);
+  currentPairing.opponentName = takeoverName;
+
+  const participant = tournamentState?.participants?.find(p => p.id === takeoverPlayer.id);
+  if (participant) {
+    participant.aiControlled = true;
+  }
+
+  if (playerName) {
+    setBattleParticipantNames(playerName, takeoverName);
+  }
 }
 
 function syncRoomConfigFromPresence(players = getPresencePlayers()) {
@@ -1225,6 +1378,7 @@ function clearPrepCountdown() {
     clearInterval(prepCountdownTimer);
     prepCountdownTimer = null;
   }
+  clearLeaderboardCountdown();
   prepDeadlineTs = 0;
 }
 
@@ -1292,7 +1446,7 @@ function buildLeaderboardRows() {
     .filter(p => !p.hidden)
     .map(p => ({
       id: p.id,
-      name: p.name,
+      name: p.aiControlled ? `AI ${p.name}` : p.name,
       score: p.score,
       record: `${p.record.w}-${p.record.d}-${p.record.l}`
     }))
@@ -1318,8 +1472,8 @@ function applyRoundResultToTournament(participantId, result) {
 
 async function applyAIAutoResult(match) {
   const [p1Id, p2Id] = match;
-  const p1Online = !!presenceState[p1Id];
-  const p2Online = !!presenceState[p2Id];
+  const p1Online = isPlayerOnline(p1Id);
+  const p2Online = isPlayerOnline(p2Id);
 
   if (p1Online && p2Online) return;
   if (p1Online !== p2Online) return;
@@ -1349,7 +1503,17 @@ async function initMultiplayer(roomId) {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   clearPrepCountdown();
 
+  currentRound = 1;
+  gameStatus = 'lobby';
+  lastLeaderboardPositions = {};
+  matchedRound = null;
+  activeBattleRound = null;
+  reportedResultRound = null;
+  currentPairing = null;
+
   presenceState = {};
+  aiTakeoverSlots = {};
+  lastPresenceSnapshot = {};
   adminSubmissions = {};
   adminProcessed = {};
   tournamentState = null;
@@ -1363,6 +1527,8 @@ async function initMultiplayer(roomId) {
   }
 
   currentRoomId = roomId;
+  const roundDisplay = document.getElementById('round-display');
+  if (roundDisplay) roundDisplay.textContent = `Round 1 / ${roomConfig.maxRounds || DEFAULT_MAX_ROUNDS}`;
   createRoomChannel(roomId, false);
 }
 
@@ -1374,25 +1540,23 @@ function updateLobbyUIFromPresence() {
   
   roomDisplay.textContent = `Room: ${currentRoomId}`;
   list.innerHTML = '';
-  
-  const players = [];
-  for (const key in presenceState) {
-    players.push(presenceState[key][0]);
-  }
-  
-  // Sort by join time to determine admin (first one)
-  players.sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt));
+
+  const onlinePlayers = getPresencePlayers().sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt));
+  const players = getLobbyPlayers();
+
   if (listTitle) listTitle.textContent = `Players (${players.length}/${ROOM_MAX_PLAYERS})`;
   list.classList.toggle('compact-grid', players.length > 8);
-  
-  if (players.length > 0) {
-    isAdmin = players[0].id === myPresenceId;
+
+  if (onlinePlayers.length > 0) {
+    isAdmin = onlinePlayers[0].id === myPresenceId;
     players.forEach(p => {
       const li = document.createElement('li');
       li.className = 'player-list-item';
+      const isOnline = isPlayerOnline(p.id);
+      const displayName = getLobbyDisplayName(p);
       li.innerHTML = `
-        <span class="player-name">${p.name} ${p.id === players[0].id ? '<span class="admin-badge">(Admin)</span>' : ''}</span>
-        ${isAdmin || p.id === myPresenceId ? `<button class="btn-kick-mini" onclick="kickPlayer('${p.id}')">${p.id === myPresenceId ? 'Leave' : 'Kick'}</button>` : ''}
+        <span class="player-name">${displayName} ${isOnline && p.id === onlinePlayers[0].id ? '<span class="admin-badge">(Admin)</span>' : ''}</span>
+        ${isOnline && (isAdmin || p.id === myPresenceId) ? `<button class="btn-kick-mini" onclick="kickPlayer('${p.id}')">${p.id === myPresenceId ? 'Leave' : 'Kick'}</button>` : ''}
       `;
       list.appendChild(li);
     });
@@ -1415,6 +1579,11 @@ function updateLobbyUIFromPresence() {
       players.length < ROOM_MIN_PLAYERS_TO_START
         ? `Need at least ${ROOM_MIN_PLAYERS_TO_START} players to start (${players.length}/${ROOM_MAX_PLAYERS}).`
         : `Ready to start (${players.length}/${ROOM_MAX_PLAYERS}). Admin can launch now.`;
+  } else {
+    isAdmin = false;
+    startBtn.style.display = 'none';
+    startBtn.disabled = true;
+    document.getElementById('lobby-status').textContent = 'Waiting for players...';
   }
 }
 
@@ -1447,6 +1616,7 @@ async function handleRoundStart(round, maxRounds, prepDurationSec = roomConfig.p
   activeBattleRound = null;
   reportedResultRound = null;
   currentPairing = null;
+  clearBattleLeaveRecovery();
 
   if (PREP_TIME_OPTIONS.includes(prepDurationSec)) {
     roomConfig.prepDurationSec = prepDurationSec;
@@ -1473,6 +1643,7 @@ async function handleRoundStart(round, maxRounds, prepDurationSec = roomConfig.p
     display.textContent = `Round ${r} / ${m}`;
   }
 
+  clearLeaderboardCountdown();
   document.getElementById('leaderboard-overlay').classList.remove('show');
   hideOverlay();
   switchPhase('shopping');
@@ -1490,6 +1661,7 @@ function handleBattleStart(data) {
   }
 
   activeBattleRound = currentRound;
+  clearBattleLeaveRecovery();
   currentPairing = {
     me: myPresenceId,
     opponentId: data.opponentId || null,
@@ -1520,6 +1692,7 @@ async function reportBattleResult(result) {
   if (reportedResultRound === currentRound) return;
 
   reportedResultRound = currentRound;
+  clearBattleLeaveRecovery();
   console.log('Reporting battle result:', result);
   
   if (isAIGame) {
@@ -1553,6 +1726,14 @@ async function reportBattleResult(result) {
     result,
     opponentId: currentPairing?.opponentId || null
   });
+
+  if (isAdmin && currentPairing?.opponentId && !isPlayerOnline(currentPairing.opponentId)) {
+    const mirrored = result === 'win' ? 'loss' : result === 'loss' ? 'win' : 'draw';
+    if (!adminProcessed[currentPairing.opponentId]) {
+      adminProcessed[currentPairing.opponentId] = { result: mirrored };
+      applyRoundResultToTournament(currentPairing.opponentId, mirrored);
+    }
+  }
   
   // IMMEDIATELY mark self as processed if admin (no waiting for broadcast)
   if (isAdmin) {
@@ -1597,8 +1778,8 @@ async function checkAndMatchPlayers() {
   if (!roundMatches.length) return;
 
   const everyoneReady = roundMatches.every(([p1Id, p2Id]) => {
-    const p1Online = !!presenceState[p1Id];
-    const p2Online = !!presenceState[p2Id];
+    const p1Online = isPlayerOnline(p1Id);
+    const p2Online = isPlayerOnline(p2Id);
 
     const p1Ready = !p1Online || !!adminSubmissions[p1Id];
     const p2Ready = !p2Online || !!adminSubmissions[p2Id];
@@ -1618,8 +1799,8 @@ async function checkAndMatchPlayers() {
     const p2 = tournamentState.participants.find(p => p.id === p2Id);
     if (!p1 || !p2) continue;
 
-    const p1Online = !!presenceState[p1Id];
-    const p2Online = !!presenceState[p2Id];
+    const p1Online = isPlayerOnline(p1Id);
+    const p2Online = isPlayerOnline(p2Id);
 
     if (!p1Online || !p2Online) {
       await applyAIAutoResult(match);
@@ -1630,7 +1811,7 @@ async function checkAndMatchPlayers() {
       const b1 = {
         targetId: p1Id,
         opponentId: p2Id,
-        enemyName: p2.hidden ? 'Rival' : p2.name,
+        enemyName: getLobbyDisplayName(p2),
         enemyItems: p2Data.items || [],
         enemyGrid: p2Data.grid || Array.from({ length: GRID_H }, () => Array(GRID_W).fill(null))
       };
@@ -1643,7 +1824,7 @@ async function checkAndMatchPlayers() {
       const b2 = {
         targetId: p2Id,
         opponentId: p1Id,
-        enemyName: p1.hidden ? 'Rival' : p1.name,
+        enemyName: getLobbyDisplayName(p1),
         enemyItems: p1Data.items || [],
         enemyGrid: p1Data.grid || Array.from({ length: GRID_H }, () => Array(GRID_W).fill(null))
       };
@@ -1725,7 +1906,7 @@ function switchPhase(phase) {
       playGridOpeningVideo();
     } else {
       // Already played A2 before (e.g. round 2+), show P1 directly and UI immediately
-      showP1Background();
+      showShopBackground();
       if (gridWrapper) gridWrapper.classList.add('grid-visible');
       document.getElementById('shop-phase').classList.remove('a2-playing');
       document.getElementById('main-header').classList.remove('header-hidden');
@@ -1794,15 +1975,23 @@ function showLeaderboard(data, options = {}) {
   const body = document.getElementById('leaderboard-body');
   const headline = options.headline || 'TOURNAMENT RESULTS';
   const includeMovement = !!options.includeMovement;
+  const autoAdvanceMs = Number(options.autoAdvanceMs || 0);
 
   if (title) title.textContent = headline;
   body.innerHTML = '';
 
   const playerIndex = data.findIndex(entry => entry.name === playerName);
+  const baseSummary = playerIndex >= 0
+    ? `You are #${playerIndex + 1} with ${data[playerIndex].score} points.`
+    : '';
   if (summary) {
-    summary.textContent = playerIndex >= 0
-      ? `You are #${playerIndex + 1} with ${data[playerIndex].score} points.`
-      : '';
+    summary.textContent = baseSummary;
+  }
+
+  if (autoAdvanceMs > 0) {
+    startLeaderboardCountdown(summary, baseSummary, autoAdvanceMs);
+  } else {
+    clearLeaderboardCountdown();
   }
   
   data.forEach((entry, idx) => {
@@ -1959,7 +2148,7 @@ window.startTutorialMode = function() {
 
 window.requestStartGame = async function() {
   if (isAdmin && channel) {
-    const players = getPresencePlayers().sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt));
+    const players = getLobbyPlayers();
     if (players.length < ROOM_MIN_PLAYERS_TO_START) {
       alert(`Need at least ${ROOM_MIN_PLAYERS_TO_START} players to start.`);
       return;
@@ -1970,7 +2159,9 @@ window.requestStartGame = async function() {
       name: p.name,
       score: 0,
       record: { w: 0, d: 0, l: 0 },
-      hidden: false
+      hidden: false,
+      aiControlled: !!p.aiControlled,
+      joinedAt: p.joinedAt
     }));
 
     if (participants.length % 2 === 1) {
@@ -1979,7 +2170,9 @@ window.requestStartGame = async function() {
         name: 'Hidden AI',
         score: 0,
         record: { w: 0, d: 0, l: 0 },
-        hidden: true
+        hidden: true,
+        aiControlled: true,
+        joinedAt: new Date().toISOString()
       });
     }
 
@@ -2009,6 +2202,8 @@ window.requestStartGame = async function() {
 };
 
 window.backToLobby = function() {
+  clearLeaderboardCountdown();
+  clearBattleLeaveRecovery();
   document.getElementById('leaderboard-overlay').classList.remove('show');
   hideOverlay();
   if (isAIGame) {
@@ -2023,6 +2218,8 @@ window.backToStartMenu = function(force = false) {
     isLeavingRoom = true;
     reconnectInProgress = false;
     clearPrepCountdown();
+    clearLeaderboardCountdown();
+    clearBattleLeaveRecovery();
     hasSubmittedThisRound = false;
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
@@ -3040,3 +3237,6 @@ function updateStats() {
 setupIntroVideo();
 init();
 preloadA2Video();
+
+window.addEventListener('pagehide', cleanupRoomOnUnload);
+window.addEventListener('beforeunload', cleanupRoomOnUnload);

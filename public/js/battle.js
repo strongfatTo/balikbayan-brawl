@@ -73,9 +73,10 @@ function renderTeamList(containerId, units) {
     const el = document.createElement('div');
     el.className = 'unit-list-item';
     el.dataset.id = u.id;
+    const art = getBattleItemArt(u);
     el.innerHTML = `
       <span class="order-num">${idx + 1}</span>
-      <span class="emoji">${u.emoji}</span>
+      <span class="emoji">${art ? `<img src="${art}" alt="${u.name}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;">` : u.emoji}</span>
       <span class="name">${u.name}</span>
     `;
     container.appendChild(el);
@@ -121,7 +122,10 @@ function renderBattleGrid(containerId, grid) {
       const occupant = grid[gy][gx];
       if (occupant) {
         cell.classList.add('occupied', occupant.item.colorClass);
-        cell.textContent = occupant.item.emoji;
+        const art = occupant.item.avatarImage || occupant.item.image;
+        cell.innerHTML = art
+          ? `<img src="${art}" alt="${occupant.item.name}" style="width:100%;height:100%;object-fit:contain;">`
+          : occupant.item.emoji;
       }
       container.appendChild(cell);
     }
@@ -132,12 +136,18 @@ function renderBattleGrid(containerId, grid) {
 function createSprite(unit, side) {
   const el = document.createElement('div');
   el.className = `battle-sprite ${side}-sprite`;
+  const art = getBattleItemArt(unit);
   el.innerHTML = `
-    <div class="sprite-emoji">${unit.emoji}</div>
+    <div class="sprite-emoji">${art ? `<img src="${art}" alt="${unit.name}" style="width:100%;height:100%;object-fit:contain;">` : unit.emoji}</div>
     <div class="sprite-name">${unit.name}</div>
     <div class="hp-bar-bg"><div class="hp-bar" style="width:100%"></div></div>
   `;
   return el;
+}
+
+function getBattleItemArt(unit) {
+  const item = ITEMS.find(candidate => candidate.id === unit.itemId);
+  return item?.avatarImage || item?.image || null;
 }
 
 function updateSpriteHp(spriteEl, unit) {
