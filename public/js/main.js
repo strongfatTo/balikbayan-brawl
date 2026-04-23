@@ -61,7 +61,10 @@ let pendingCreateConfig = null;
 let tutorialMode = false;
 let tutorialActive = false;
 let tutorialStepIndex = 0;
-let tutorialLastFocus = null;
+let tutorialFocusedElements = [];
+let tutorialStepBodyClass = '';
+let tutorialRotateAttempts = 0;
+let tutorialShopIndex = 0;
 let opLog = [];
 const ROOM_MAX_PLAYERS = 16;
 const ROOM_MIN_PLAYERS_TO_START = 2;
@@ -70,6 +73,19 @@ const ROUND_COUNT_OPTIONS = [3, 4, 5];
 const DEFAULT_PREP_TIME_SEC = 60;
 const DEFAULT_MAX_ROUNDS = 5;
 const ROUND_LEADERBOARD_MS = 10000;
+const FIXED_SHOP_SEQUENCE = [
+  'jeans',
+  'shampoo',
+  'bread',
+  'shoes',
+  'spam',
+  'chocolate',
+  'pillbox',
+  'pan',
+  'bleach',
+  'alcohol',
+  'toothpaste'
+];
 
 const GUIDE_KEY = 'bb_seen_guide_v1';
 const HUMAN_AI_STORAGE_KEY = 'bb_human_builds_cache_v1';
@@ -451,6 +467,17 @@ function updateBudgetDisplay() {
 // ????????????????????????????????????????????????????????
 function restockShop() {
   shopOfferings = [];
+
+  if (tutorialMode) {
+    for (let i = 0; i < SHOP_OFFERING_COUNT; i++) {
+      const itemId = FIXED_SHOP_SEQUENCE[tutorialShopIndex % FIXED_SHOP_SEQUENCE.length];
+      const item = ITEMS.find(it => it.id === itemId);
+      if (item) shopOfferings.push(item);
+      tutorialShopIndex++;
+    }
+    return;
+  }
+
   const availableItems = [...ITEMS];
   for (let i = 0; i < SHOP_OFFERING_COUNT; i++) {
     if (availableItems.length === 0) break;
@@ -505,7 +532,10 @@ function init() {
   tutorialActive = false;
   tutorialMode = false;
   tutorialStepIndex = 0;
-  tutorialLastFocus = null;
+  tutorialFocusedElements = [];
+  tutorialStepBodyClass = '';
+  tutorialRotateAttempts = 0;
+  tutorialShopIndex = 0;
   opLog = [];
   presenceState = {};
   aiTakeoverSlots = {};
@@ -869,63 +899,171 @@ function renderItemPopover(item, bonusText = '', isActive = false) {
 
 const tutorialSteps = [
   {
-    title: 'Guide Start',
-    text: 'Welcome! This guide will teach one full flow: pick, rotate, place, and fight.',
+    id: 'guide_start',
+    title: 'Step 1/7 - Guide Flow',
+    text: 'This guide has two phases: Shop Flow (pick, rotate, place) then Battle Flow (read rules, fight).',
     target: '.selection-tip',
     validate: () => true
   },
   {
-    title: 'Pick An Item',
-    text: 'Click any item card in the shop list to select it.',
-    target: '#shop-list',
-    validate: () => !!selectedItem
+    id: 'pick_rotatable_item',
+    title: 'Step 2/7 - Pick A Rotatable Item',
+    text: 'Select an item card that shows an R button. Items with R can be rotated.',
+    target: '.shop-panel',
+    validate: () => !!selectedItem && selectedItem.shapes.length > 1
   },
   {
-    title: 'Rotate Shape',
-    text: 'Press R or click the R button on selected item to rotate it.',
-    target: '#shop-list .item-card.selected',
-    validate: () => opLog.some(log => log.type === 'rotate_item')
+    id: 'rotate_shape',
+    title: 'Step 3/7 - Rotate Shape',
+    text: 'Items can be rotated. Press R or click the highlighted R icon 3 times to practice.',
+    target: '#shop-list .item-card.selected .rotate-btn',
+    extraTargets: ['#shop-list .item-card.selected'],
+    validate: () => tutorialRotateAttempts >= 3,
+    stepClass: 'tutorial-step-rotate'
   },
   {
-    title: 'Place On Grid',
+    id: 'place_on_grid',
+    title: 'Step 4/7 - Place On Grid',
     text: 'Now click the grid to place your selected item.',
     target: '.grid-bg-wrapper',
     validate: () => placedItems.length > 0
   },
   {
-    title: 'Read Rules',
-    text: 'Check Item Rules. They explain top/bottom zones and synergies.',
-    target: '#rules-list',
-    validate: () => true
+    id: 'row_effects',
+    title: 'Step 5/7 - Row Effects',
+    text: 'Row effects matter. Row 1-2 (top) and Row 4-5 (bottom) can change bonuses and penalties.',
+    target: '.row-indicators',
+    extraTargets: [
+      '.row-indicators .ri:nth-child(1)',
+      '.row-indicators .ri:nth-child(2)',
+      '.row-indicators .ri:nth-child(3)',
+      '.row-indicators .ri:nth-child(4)',
+      '.row-indicators .ri:nth-child(5)'
+    ],
+    validate: () => true,
+    stepClass: 'tutorial-step-row-effects'
   },
   {
-    title: 'Fight',
+    id: 'read_rules',
+    title: 'Step 6/7 - Read Rules',
+    text: 'Check Item Rules here before fighting. They explain row effects and synergies.',
+    target: '#shop-list .info-btn',
+    validate: () => true,
+    stepClass: 'tutorial-step-read-rules'
+  },
+  {
+    id: 'fight',
+    title: 'Step 7/7 - Fight',
     text: 'Press FIGHT to start combat. Tutorial ends after battle starts.',
     target: '#btn-fight',
     validate: () => false,
-    finalAction: 'start_battle'
+    finalAction: 'start_battle',
+    stepClass: 'tutorial-step-fight'
   }
 ];
 
 function clearTutorialFocus() {
-  if (tutorialLastFocus) tutorialLastFocus.classList.remove('tutorial-focus');
-  tutorialLastFocus = null;
+  tutorialFocusedElements.forEach(el => {
+    el.classList.remove('tutorial-focus');
+    el.style.position = '';
+  });
+  tutorialFocusedElements = [];
+  const spotlight = document.getElementById('tutorial-spotlight');
+  if (spotlight) spotlight.style.display = 'none';
+  const overlay = document.querySelector('.tutorial-overlay');
+  if (overlay) overlay.style.clipPath = 'none';
 }
 
-function setTutorialFocus(selector) {
+function clearTutorialStepClass() {
+  if (tutorialStepBodyClass) {
+    document.body.classList.remove(tutorialStepBodyClass);
+    tutorialStepBodyClass = '';
+  }
+}
+
+function setTutorialFocus(step) {
   clearTutorialFocus();
-  if (!selector) return;
+  if (!step) return;
 
-  const el = document.querySelector(selector);
-  if (!el) return;
+  const selectors = [];
+  if (step.target) selectors.push(step.target);
+  if (Array.isArray(step.extraTargets)) selectors.push(...step.extraTargets);
 
-  el.classList.add('tutorial-focus');
-  tutorialLastFocus = el;
+  let primaryEl = null;
+  selectors.forEach((selector) => {
+    if (!selector) return;
+    const el = document.querySelector(selector);
+    if (!el) return;
+
+    const computed = window.getComputedStyle(el);
+    if (computed.position === 'absolute') {
+      el.style.position = 'absolute';
+    } else {
+      el.classList.add('tutorial-focus');
+    }
+    tutorialFocusedElements.push(el);
+    if (!primaryEl) primaryEl = el;
+  });
+
+  updateSpotlight();
 
   const arrow = document.getElementById('tutorial-arrow');
-  const rect = el.getBoundingClientRect();
+  if (!primaryEl) {
+    arrow.style.display = 'none';
+    return;
+  }
+
+  arrow.style.display = 'block';
+  const rect = primaryEl.getBoundingClientRect();
   arrow.style.left = `${Math.max(12, rect.left - 38)}px`;
   arrow.style.top = `${Math.max(16, rect.top + rect.height / 2 - 16)}px`;
+}
+
+function updateSpotlight() {
+  const spotlight = document.getElementById('tutorial-spotlight');
+  const overlay = document.querySelector('.tutorial-overlay');
+  if (!spotlight || tutorialFocusedElements.length === 0) {
+    if (spotlight) spotlight.style.display = 'none';
+    if (overlay) overlay.style.clipPath = 'none';
+    return;
+  }
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+  tutorialFocusedElements.forEach(el => {
+    const rect = el.getBoundingClientRect();
+    minX = Math.min(minX, rect.left);
+    minY = Math.min(minY, rect.top);
+    maxX = Math.max(maxX, rect.right);
+    maxY = Math.max(maxY, rect.bottom);
+  });
+
+  const padding = 8;
+  const left = minX - padding;
+  const top = minY - padding;
+  const width = maxX - minX + padding * 2;
+  const height = maxY - minY + padding * 2;
+
+  spotlight.style.display = 'block';
+  spotlight.style.left = `${left}px`;
+  spotlight.style.top = `${top}px`;
+  spotlight.style.width = `${width}px`;
+  spotlight.style.height = `${height}px`;
+
+  if (overlay) {
+    overlay.style.clipPath = `polygon(
+      0% 0%,
+      0% 100%,
+      ${left}px 100%,
+      ${left}px ${top}px,
+      ${left + width}px ${top}px,
+      ${left + width}px ${top + height}px,
+      ${left}px ${top + height}px,
+      ${left}px 100%,
+      100% 100%,
+      100% 0%
+    )`;
+  }
 }
 
 function renderTutorialStep() {
@@ -935,12 +1073,19 @@ function renderTutorialStep() {
   document.getElementById('tutorial-title').textContent = step.title;
   document.getElementById('tutorial-text').textContent = step.text;
   document.getElementById('tutorial-next-btn').style.display = step.finalAction ? 'none' : 'inline-flex';
-  setTutorialFocus(step.target);
+  clearTutorialStepClass();
+  if (step.stepClass) {
+    document.body.classList.add(step.stepClass);
+    tutorialStepBodyClass = step.stepClass;
+  }
+  setTutorialFocus(step);
 }
 
 function startTutorialFlow() {
   tutorialActive = true;
   tutorialStepIndex = 0;
+  tutorialRotateAttempts = 0;
+  clearTutorialStepClass();
   document.body.classList.add('tutorial-active');
   document.getElementById('tutorial-overlay').style.display = 'flex';
   renderTutorialStep();
@@ -949,7 +1094,9 @@ function startTutorialFlow() {
 function endTutorialFlow() {
   tutorialActive = false;
   tutorialStepIndex = 0;
+  tutorialRotateAttempts = 0;
   clearTutorialFocus();
+  clearTutorialStepClass();
   document.body.classList.remove('tutorial-active');
   document.getElementById('tutorial-overlay').style.display = 'none';
 }
@@ -2449,8 +2596,19 @@ function renderShop() {
         e.stopPropagation();
         if (selectedItem && selectedItem.id === item.id) {
           selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
+          if (tutorialActive) {
+            const step = tutorialSteps[tutorialStepIndex];
+            if (step && step.id === 'rotate_shape') {
+              tutorialRotateAttempts += 1;
+            }
+          }
           renderShop();
           if (lastHoverGx >= 0 && lastHoverGy >= 0) updateHoverPreview(lastHoverGx, lastHoverGy);
+          advanceTutorialByAction('rotate_item');
+          if (tutorialActive) {
+            const currentStep = tutorialSteps[tutorialStepIndex];
+            if (currentStep) setTutorialFocus(currentStep);
+          }
         }
       });
       card.appendChild(rotateBtn);
@@ -3211,10 +3369,20 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault(); // Prevent accidental scroll or other browser defaults
     selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
     recordOperation('rotate_item', { itemId: selectedItem.id, shapeIdx: selectedShapeIdx });
+    if (tutorialActive) {
+      const step = tutorialSteps[tutorialStepIndex];
+      if (step && step.id === 'rotate_shape') {
+        tutorialRotateAttempts += 1;
+      }
+    }
     renderShop();
     if (lastHoverGx >= 0 && lastHoverGy >= 0)
       updateHoverPreview(lastHoverGx, lastHoverGy);
     advanceTutorialByAction('rotate_item');
+    if (tutorialActive) {
+      const currentStep = tutorialSteps[tutorialStepIndex];
+      if (currentStep) setTutorialFocus(currentStep);
+    }
   }
 });
 
