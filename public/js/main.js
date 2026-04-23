@@ -1527,6 +1527,8 @@ async function initMultiplayer(roomId) {
   }
 
   currentRoomId = roomId;
+  switchPhase('lobby');
+  updateLobbyUIFromPresence();
   const roundDisplay = document.getElementById('round-display');
   if (roundDisplay) roundDisplay.textContent = `Round 1 / ${roomConfig.maxRounds || DEFAULT_MAX_ROUNDS}`;
   createRoomChannel(roomId, false);
