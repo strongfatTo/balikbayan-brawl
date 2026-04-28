@@ -620,10 +620,18 @@ body.tutorial-active.tutorial-step-read-rules .rules-guide-pill {
   flex-direction: column;
   align-items: center;
 }
+.grid-controls-row {
+  width: min(860px, 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
 .grid-label {
   font-size: 16px;
   color: #a8a8b8;
-  margin-bottom: 10px;
+  margin-bottom: 0;
   text-align: center;
 }
 .grid-label kbd {
@@ -632,6 +640,33 @@ body.tutorial-active.tutorial-step-read-rules .rules-guide-pill {
   border-radius: 4px;
   font-size: 14px;
   border: 1px solid #555;
+}
+
+.btn-rotate-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 2px solid #f0c040;
+  background: linear-gradient(135deg, #4b2f00, #7a4a00);
+  color: #fff0c4;
+  border-radius: 12px;
+  padding: 10px 18px;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.7px;
+  cursor: pointer;
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.26);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.btn-rotate-picker:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 14px 24px rgba(0, 0, 0, 0.34);
+}
+
+.btn-rotate-picker .rotate-symbol {
+  font-size: 30px;
+  line-height: 1;
 }
 
 .prepare-team-container {
@@ -661,6 +696,43 @@ body.tutorial-active.tutorial-step-read-rules .rules-guide-pill {
   gap: 10px;
   min-height: 60px;
   margin-top: 10px;
+}
+
+.parked-items-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.14);
+}
+
+.parked-items-title {
+  font-size: 12px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: #8ea4d6;
+  margin-bottom: 8px;
+}
+
+.parked-items-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  min-height: 72px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+}
+
+.parked-item-tag {
+  opacity: 0.95;
+  border-color: rgba(78, 204, 163, 0.45);
+  background: rgba(18, 45, 36, 0.52);
+}
+
+.parked-item-tag:hover {
+  border-color: #4ecca3;
+  background: rgba(18, 45, 36, 0.76);
 }
 
 .placed-item-tag {
@@ -825,6 +897,114 @@ body.tutorial-active.tutorial-step-read-rules .rules-guide-pill {
   color: #9cb0d4;
   letter-spacing: 0.3px;
   text-align: center;
+}
+
+.rotate-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.6);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.rotate-picker-overlay.show {
+  display: flex !important;
+}
+
+.rotate-picker-card {
+  width: min(640px, 96vw);
+  background: #17274a;
+  border: 2px solid rgba(240, 192, 64, 0.7);
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
+}
+
+.rotate-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.rotate-picker-header h3 {
+  color: #ffe3a0;
+  font-size: 18px;
+}
+
+.rotate-picker-close {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid #44628f;
+  background: #243a63;
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.rotate-picker-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.rotate-option {
+  border: 2px solid #2e4e7f;
+  border-radius: 10px;
+  background: rgba(11, 24, 48, 0.7);
+  padding: 8px;
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease;
+  color: #dce6ff;
+}
+
+.rotate-option:hover {
+  transform: translateY(-2px);
+  border-color: #f0c040;
+}
+
+.rotate-option.active {
+  border-color: #4ecca3;
+  box-shadow: 0 0 0 2px rgba(78, 204, 163, 0.25);
+}
+
+.rotate-option-index {
+  text-align: center;
+  font-size: 11px;
+  margin-top: 6px;
+  opacity: 0.9;
+}
+
+.rotate-shape-preview {
+  width: 88px;
+  height: 88px;
+  margin: 0 auto;
+  display: grid;
+  gap: 3px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+
+.rotate-shape-preview .rotate-cell {
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.rotate-shape-preview .rotate-cell.empty {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.rotate-shape-preview .rotate-cell.occupied {
+  background: linear-gradient(180deg, #62e6aa 0%, #29c06d 100%);
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 /* Tutorial overlay and spotlight */
@@ -1597,36 +1777,12 @@ body.tutorial-active.tutorial-step-row-effects .row-indicators .ri {
   box-shadow: 0 0 16px rgba(233, 69, 96, 0.4) !important;
 }
 
-/* ── Rotate button on selected card ── */
-.item-card .rotate-btn {
-  display: none;
-  position: absolute;
-  bottom: 4px;
-  right: 4px;
-  width: 26px;
-  height: 26px;
-  background: rgba(240, 192, 64, 0.9);
-  color: #000;
-  border: none;
-  border-radius: 50%;
-  font-size: 13px;
-  font-weight: 900;
-  cursor: pointer;
-  z-index: 6;
-  transition: all 0.15s;
-  align-items: center;
-  justify-content: center;
-}
-.item-card.selected .rotate-btn { display: flex; }
-.item-card .rotate-btn:hover { background: #f0c040; transform: scale(1.2); }
-body.tutorial-active.tutorial-step-rotate .item-card.selected .rotate-btn {
-  display: flex;
-  background: #ffd566;
+body.tutorial-active.tutorial-step-rotate #btn-rotate-picker {
   box-shadow: 0 0 0 2px rgba(255, 231, 170, 0.95), 0 0 18px rgba(240, 192, 64, 0.85);
-  transform: scale(1.1);
+  transform: scale(1.04);
 }
 
-/* item-card needs position:relative for rotate btn */
+/* item-card needs position:relative for overlays */
 .item-card { position: relative; }
 
 .drag-ghost {
@@ -1820,6 +1976,16 @@ body.tutorial-active.tutorial-step-rotate .item-card.selected .rotate-btn {
   .action-bar .btn {
     flex: 1 1 170px;
   }
+
+  .grid-controls-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .btn-rotate-picker {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 @media (max-width: 768px) {
@@ -1866,6 +2032,15 @@ body.tutorial-active.tutorial-step-rotate .item-card.selected .rotate-btn {
   .selection-tip,
   .grid-label {
     font-size: 13px;
+  }
+
+  .btn-rotate-picker {
+    font-size: 14px;
+    padding: 10px 12px;
+  }
+
+  .btn-rotate-picker .rotate-symbol {
+    font-size: 24px;
   }
 
   .stat-box {
@@ -2692,5 +2867,11 @@ body.tutorial-active.tutorial-step-rotate .item-card.selected .rotate-btn {
 
   .action-bar .btn {
     flex: 1 1 130px;
+  }
+
+  .rotate-picker-card {
+    width: 100%;
+    max-height: 78vh;
+    overflow-y: auto;
   }
 }
