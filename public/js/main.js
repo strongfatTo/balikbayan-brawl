@@ -925,10 +925,9 @@ const tutorialSteps = [
   {
     id: 'rotate_shape',
     title: 'Step 3/7 - Rotate Shape',
-    text: 'Press R or tap the big rotate button and choose a shape 3 times.',
+    text: 'Tap the rotate button to change shape.',
     target: '#btn-rotate-picker',
-    extraTargets: ['.grid-controls-row'],
-    validate: () => tutorialRotateAttempts >= 3,
+    validate: () => tutorialRotateAttempts >= 1,
     stepClass: 'tutorial-step-rotate'
   },
   {
@@ -1144,7 +1143,7 @@ window.nextTutorialStep = function() {
       if (step.id === 'pick_rotatable_item') {
         hintText = 'Select an item that can be rotated';
       } else if (step.id === 'rotate_shape') {
-        hintText = 'Press R or click rotate 3 times';
+        hintText = 'Tap rotate button to change shape';
       } else if (step.id === 'place_on_grid') {
         hintText = 'Drag an item onto the grid first';
       } else if (step.id === 'pack_box') {
