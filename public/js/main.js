@@ -548,6 +548,9 @@ function init() {
   const roundDisplay = document.getElementById('round-display');
   if (roundDisplay) roundDisplay.textContent = `Round 1 / ${roomConfig.maxRounds || DEFAULT_MAX_ROUNDS}`;
 
+  // Mobile toolbar setup
+  initMobileToolbar();
+
   if (prepCountdownTimer) {
     clearInterval(prepCountdownTimer);
     prepCountdownTimer = null;
@@ -1080,6 +1083,8 @@ function renderTutorialStep() {
     document.body.classList.add(step.stepClass);
     tutorialStepBodyClass = step.stepClass;
   }
+  
+  // Selection tip is controlled by CSS based on tutorial-active class
   setTutorialFocus(step);
 }
 
@@ -1124,9 +1129,35 @@ function advanceTutorialByAction(actionName) {
 window.nextTutorialStep = function() {
   if (!tutorialActive) return;
   const step = tutorialSteps[tutorialStepIndex];
-  if (!step || (step.validate && !step.validate())) {
+  if (!step) return;
+  
+  // Check if step requirement is met - if not, show hint
+  if (step.validate && !step.validate()) {
+    const hint = document.getElementById('tutorial-hint');
+    if (hint) {
+      let hintText = '';
+      if (step.id === 'pick_rotatable_item') {
+        hintText = 'Select an item that can be rotated';
+      } else if (step.id === 'rotate_shape') {
+        hintText = 'Press R or click rotate 3 times';
+      } else if (step.id === 'place_on_grid') {
+        hintText = 'Drag an item onto the grid first';
+      } else if (step.id === 'pack_box') {
+        hintText = 'Fill more cells to prepare';
+      } else {
+        hintText = 'Follow the step above first';
+      }
+      hint.textContent = hintText;
+      hint.classList.add('show');
+      
+      // Auto hide after 2.5 seconds
+      setTimeout(() => {
+        hint.classList.remove('show');
+      }, 2500);
+    }
     return;
   }
+  
   tutorialStepIndex = Math.min(tutorialStepIndex + 1, tutorialSteps.length - 1);
   renderTutorialStep();
 };
@@ -2737,7 +2768,10 @@ function onGridDragMove(e) {
   }
 
   if (gridDragState.ghostEl) {
-    gridDragState.ghostEl.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + 14}px)`;
+    // Touch-friendly offset: raise ghost above finger to prevent occlusion
+    const isTouch = e.pointerType === 'touch';
+    const touchOffsetY = isTouch ? -80 : 14; // Raise ghost 80px above finger on touch
+    gridDragState.ghostEl.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + touchOffsetY}px)`;
   }
 
   updateGridDragHoverFromPoint(e.clientX, e.clientY);
@@ -3575,8 +3609,59 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ????????????????????????????????????????????????????????
+//  INIT MOBILE TOOLBAR
+function initMobileToolbar() {
+  const rotateBtn = document.getElementById('btn-rotate-mobile');
+  const sellBtn = document.getElementById('btn-sell-mobile');
+  
+  if (rotateBtn) {
+    rotateBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      rotateSelectedItem();
+    });
+  }
+  
+  if (sellBtn) {
+    sellBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      sellSelectedItem();
+    });
+  }
+  
+  updateMobileToolbar();
+}
+
+function rotateSelectedItem() {
+  if (!selectedItem) return;
+  selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
+  recordOperation('rotate_item', { itemId: selectedItem.id, shapeIdx: selectedShapeIdx });
+  renderShop();
+  if (lastHoverGx >= 0 && lastHoverGy >= 0) {
+    updateHoverPreview(lastHoverGx, lastHoverGy);
+  }
+}
+
+function sellSelectedItem() {
+  // Find the first placed item and sell it
+  if (placedItems.length === 0) return;
+  const itemToSell = placedItems[0];
+  sellItem(itemToSell.placedId);
+}
+
+function updateMobileToolbar() {
+  const rotateBtn = document.getElementById('btn-rotate-mobile');
+  const sellBtn = document.getElementById('btn-sell-mobile');
+  
+  if (rotateBtn) {
+    rotateBtn.disabled = !selectedItem;
+  }
+  
+  if (sellBtn) {
+    sellBtn.disabled = placedItems.length === 0;
+  }
+}
+
 //  STATS
-// ????????????????????????????????????????????????????????
 function updateStats() {
   let totalAtk = 0, cellsUsed = 0;
   placedItems.forEach(pi => {
@@ -3587,11 +3672,12 @@ function updateStats() {
   document.getElementById('stat-atk').textContent = totalAtk;
   document.getElementById('stat-items').textContent = placedItems.length;
   document.getElementById('stat-grid').textContent = `${cellsUsed}/25`;
+  
+  // Update mobile toolbar
+  updateMobileToolbar();
 }
 
-// ????????????????????????????????????????????????????????
 //  BOOT
-// ????????????????????????????????????????????????????????
 setupIntroVideo();
 init();
 preloadA2Video();

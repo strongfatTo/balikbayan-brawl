@@ -83,17 +83,15 @@
 <div id="shop-phase" style="display:none;">
   <div class="shop-panel">
     <div class="shop-header-actions">
-      <button class="btn btn-back-mini" onclick="backToStartMenu()">← Menu</button>
-      <div class="round-indicator" id="round-display">Round 1 / 5</div>
+      <button class="btn btn-back-mini" onclick="backToStartMenu()">≡</button>
+      <div class="round-indicator" id="round-display">R1/5</div>
+      <div class="prep-timer" id="prep-timer-display">1:00</div>
+      <div class="budget-bar">
+        <span class="money" id="budget-display">$10</span>
+      </div>
+      <button class="btn-restock" id="btn-restock" onclick="restockShopBtn()">Restock $1</button>
     </div>
-    <div class="prep-timer" id="prep-timer-display">Prep: 1:00</div>
-    <div class="budget-bar">
-      <span>Budget</span>
-      <span class="money" id="budget-display">$10</span>
-    </div>
-    <div class="selection-tip">Drag an item from shop into the box. Drag again to reposition.</div>
     <div id="shop-list"></div>
-    <button class="btn-restock" id="btn-restock" onclick="restockShopBtn()">Restock ($1)</button>
 
     <!-- Sell Box -->
     <div class="sell-box" id="sell-box">
@@ -107,7 +105,7 @@
 
   <div class="grid-panel">
     <div class="grid-label">
-      Drag item cards into the grid. Press <kbd>R</kbd> to rotate selected shape.
+      Drag to place. Tap selected item to rotate.
     </div>
     <div class="grid-bg-wrapper">
       <!-- A2 video plays behind the grid when entering the game -->
@@ -128,8 +126,15 @@
         <div class="box-grid" id="player-grid"></div>
       </div>
     </div>
+    
+    <!-- Mobile Rotate + Sell Toolbar -->
+    <div class="mobile-toolbar">
+      <button class="btn-rotate-mobile" id="btn-rotate-mobile" title="Rotate (R)" disabled>⟳</button>
+      <button class="btn-sell-mobile" id="btn-sell-mobile" title="Sell selected (50% refund)" disabled>🗑️</button>
+    </div>
+    
     <div class="stats-summary" id="player-stats">
-      <div class="stat-box"><div class="label">Total ATK</div><div class="value red" id="stat-atk">0</div></div>
+      <div class="stat-box"><div class="label">ATK</div><div class="value red" id="stat-atk">0</div></div>
       <div class="stat-box"><div class="label">Items</div><div class="value yellow" id="stat-items">0</div></div>
       <div class="stat-box"><div class="label">Grid</div><div class="value" id="stat-grid" style="color:#5dade2">0/25</div></div>
     </div>
@@ -248,6 +253,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Tutorial hint toast for premature Next clicks -->
+  <div id="tutorial-hint" class="tutorial-hint"></div>
 
   <!-- POP OVER TOOLTIP -->
   <div id="item-popover" class="item-popover"></div>
