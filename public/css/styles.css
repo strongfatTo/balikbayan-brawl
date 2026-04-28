@@ -1764,6 +1764,15 @@ body.tutorial-active.tutorial-step-rotate .item-card.selected .rotate-btn {
 }
 
 @media (max-width: 768px) {
+  html, body {
+    width: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    font-size: 14px;
+  }
+
   .header {
     padding: 12px;
   }
@@ -1822,5 +1831,191 @@ body.tutorial-active.tutorial-step-rotate .item-card.selected .rotate-btn {
   .leaderboard-table td {
     padding: 8px;
     font-size: 12px;
+  }
+
+  .phase-container {
+    min-height: auto;
+    align-items: flex-start;
+    padding: 10px 8px 20px;
+  }
+
+  #login-phase,
+  #lobby-phase,
+  #shop-phase {
+    width: 100%;
+  }
+
+  .login-card,
+  .lobby-card,
+  .leaderboard-card {
+    padding: 18px 14px;
+    border-radius: 12px;
+  }
+
+  .login-card h2,
+  .lobby-card h2 {
+    font-size: 26px;
+    margin-bottom: 18px;
+  }
+
+  .welcome-floaters span {
+    opacity: 0.08;
+    font-size: clamp(18px, 6vw, 28px);
+  }
+
+  #shop-phase {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 8px;
+    max-width: 100%;
+  }
+
+  .shop-panel,
+  .grid-panel,
+  .rules-panel-inline {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .shop-panel {
+    order: 1;
+  }
+
+  .grid-panel {
+    order: 2;
+  }
+
+  .shop-header-actions {
+    gap: 8px;
+  }
+
+  .selection-tip,
+  .grid-label {
+    font-size: 12px;
+    line-height: 1.35;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .budget-bar {
+    padding: 10px 12px;
+  }
+
+  .budget-bar .money {
+    font-size: 24px;
+  }
+
+  .item-card {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  .item-shape-preview {
+    width: 48px;
+    height: 48px;
+  }
+
+  .item-info .name {
+    font-size: 13px;
+  }
+
+  .item-price {
+    font-size: 16px;
+  }
+
+  .rules-panel {
+    margin-top: 10px;
+    padding: 10px 12px;
+  }
+
+  .rule-row {
+    font-size: 12px;
+    gap: 8px;
+  }
+
+  .prepare-team-container {
+    margin-top: 14px;
+    padding: 12px 10px;
+  }
+
+  .prepare-team-container h3 {
+    font-size: 15px;
+  }
+
+  .prepare-team-container .subtitle {
+    font-size: 11px;
+  }
+
+  .placed-items-list {
+    gap: 8px;
+  }
+
+  .placed-item-tag {
+    width: 48px;
+    height: 48px;
+    padding: 4px;
+  }
+
+  .placed-item-tag .item-emoji {
+    font-size: 26px;
+  }
+
+  .grid-bg-wrapper {
+    width: min(94vw, 94vh, 360px);
+    height: min(94vw, 94vh, 360px);
+    margin: 10px auto 0;
+  }
+
+  .box-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-rows: repeat(5, minmax(0, 1fr));
+    gap: 1px;
+    padding: 2px;
+  }
+
+  .box-grid .cell {
+    width: auto;
+    height: auto;
+    font-size: clamp(18px, 7vw, 28px);
+    border-radius: 4px;
+  }
+
+  .grid-cell-emoji {
+    font-size: 22px;
+  }
+
+  .grid-cell-badge {
+    width: 16px;
+    height: 16px;
+    font-size: 10px;
+  }
+
+  .stats-summary {
+    gap: 8px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .stat-box {
+    min-width: 84px;
+    padding: 8px 10px;
+  }
+
+  .stat-box .label {
+    font-size: 11px;
+  }
+
+  .stat-box .value {
+    font-size: 18px;
+  }
+
+  .action-bar {
+    width: 100%;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .action-bar .btn {
+    flex: 1 1 140px;
   }
 }
