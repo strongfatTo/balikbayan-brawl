@@ -10,6 +10,7 @@ let budget = STARTING_BUDGET;
 let previousBudget = STARTING_BUDGET;
 let playerGrid = Array.from({length: GRID_H}, () => Array(GRID_W).fill(null));
 let placedItems = [];
+let parkedItems = [];
 let gridCells = [];
 let selectedItem = null;
 let selectedShapeIdx = 0;
@@ -68,6 +69,7 @@ let tutorialShopIndex = 0;
 let opLog = [];
 let gridDragState = null;
 let suppressGridClickUntil = 0;
+let rotatePickerState = null;
 const ROOM_MAX_PLAYERS = 16;
 const ROOM_MIN_PLAYERS_TO_START = 2;
 const PREP_TIME_OPTIONS = [60, 90, 120];
@@ -503,10 +505,13 @@ window.restockShopBtn = function() {
 //  INIT
 // ????????????????????????????????????????????????????????
 function init() {
+  closeRotatePicker();
+  resetGridDragState();
   budget = STARTING_BUDGET;
   previousBudget = STARTING_BUDGET;
   playerGrid = Array.from({length: GRID_H}, () => Array(GRID_W).fill(null));
   placedItems = [];
+  parkedItems = [];
   selectedItem = null;
   selectedShapeIdx = 0;
   movingItemState = null;
@@ -910,16 +915,16 @@ const tutorialSteps = [
   {
     id: 'pick_rotatable_item',
     title: 'Step 2/7 - Pick A Rotatable Item',
-    text: 'Select an item card that shows an R button. Items with R can be rotated.',
+    text: 'Pick an item with multiple shapes, then open rotate picker.',
     target: '.shop-panel',
     validate: () => !!selectedItem && selectedItem.shapes.length > 1
   },
   {
     id: 'rotate_shape',
     title: 'Step 3/7 - Rotate Shape',
-    text: 'Items can be rotated. Press R or click the highlighted R icon 3 times to practice.',
-    target: '#shop-list .item-card.selected .rotate-btn',
-    extraTargets: ['#shop-list .item-card.selected'],
+    text: 'Press R or tap the big rotate button and choose a shape 3 times.',
+    target: '#btn-rotate-picker',
+    extraTargets: ['.grid-controls-row'],
     validate: () => tutorialRotateAttempts >= 3,
     stepClass: 'tutorial-step-rotate'
   },
@@ -2044,6 +2049,7 @@ async function checkRoundCompletion() {
 function switchPhase(phase) {
   // Always hide shop popover when leaving/entering phases to avoid UI leaking into battle.
   hideItemPopover();
+  closeRotatePicker();
 
   document.getElementById('login-phase').style.display = phase === 'login' ? 'flex' : 'none';
   document.getElementById('lobby-phase').style.display = phase === 'lobby' ? 'flex' : 'none';
@@ -2355,6 +2361,7 @@ window.requestStartGame = async function() {
 window.backToLobby = function() {
   clearLeaderboardCountdown();
   clearBattleLeaveRecovery();
+  closeRotatePicker();
   document.getElementById('leaderboard-overlay').classList.remove('show');
   hideOverlay();
   if (isAIGame) {
@@ -2368,6 +2375,7 @@ window.backToStartMenu = function(force = false) {
   if (force || confirm('Are you sure you want to leave the current game?')) {
     isLeavingRoom = true;
     reconnectInProgress = false;
+    closeRotatePicker();
     clearPrepCountdown();
     clearLeaderboardCountdown();
     clearBattleLeaveRecovery();
@@ -2386,6 +2394,7 @@ window.backToStartMenu = function(force = false) {
     tournamentState = null;
     currentPairing = null;
     currentRoomId = null;
+    parkedItems = [];
     init();
   }
 };
@@ -2588,36 +2597,8 @@ function renderShop() {
     price.textContent = `$${item.price}`;
     card.appendChild(price);
 
-    // Rotate button (only for items with >1 shape)
-    if (item.shapes.length > 1) {
-      const rotateBtn = document.createElement('button');
-      rotateBtn.className = 'rotate-btn';
-      rotateBtn.textContent = 'R';
-      rotateBtn.title = 'Rotate shape';
-      rotateBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (selectedItem && selectedItem.id === item.id) {
-          selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
-          if (tutorialActive) {
-            const step = tutorialSteps[tutorialStepIndex];
-            if (step && step.id === 'rotate_shape') {
-              tutorialRotateAttempts += 1;
-            }
-          }
-          renderShop();
-          if (lastHoverGx >= 0 && lastHoverGy >= 0) updateHoverPreview(lastHoverGx, lastHoverGy);
-          advanceTutorialByAction('rotate_item');
-          if (tutorialActive) {
-            const currentStep = tutorialSteps[tutorialStepIndex];
-            if (currentStep) setTutorialFocus(currentStep);
-          }
-        }
-      });
-      card.appendChild(rotateBtn);
-    }
-
     card.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.info-btn') || e.target.closest('.rotate-btn')) return;
+      if (e.target.closest('.info-btn')) return;
       beginShopItemDrag(e, item);
     });
     container.appendChild(card);
@@ -2647,6 +2628,99 @@ function selectItem(item) {
   renderShop();
   advanceTutorialByAction('select_item');
 }
+
+function buildRotateShapePreview(item, shapeIdx) {
+  const shape = item.shapes[shapeIdx];
+  const previewSize = 3;
+
+  let html = '';
+  for (let py = previewSize - 1; py >= 0; py--) {
+    for (let px = 0; px < previewSize; px++) {
+      const filled = shape.some(([sx, sy]) => sx === px && sy === py);
+      html += `<div class="rotate-cell ${filled ? 'occupied' : 'empty'}"></div>`;
+    }
+  }
+
+  return `<div class="rotate-shape-preview" style="grid-template-columns:repeat(${previewSize},1fr);grid-template-rows:repeat(${previewSize},1fr);">${html}</div>`;
+}
+
+function closeRotatePicker() {
+  const overlay = document.getElementById('rotate-picker-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('show');
+  overlay.style.display = 'none';
+  rotatePickerState = null;
+}
+
+function applyRotateShape(shapeIdx) {
+  if (!rotatePickerState?.item) return;
+
+  selectedItem = rotatePickerState.item;
+  selectedShapeIdx = shapeIdx % selectedItem.shapes.length;
+
+  recordOperation('rotate_item', { itemId: selectedItem.id, shapeIdx: selectedShapeIdx });
+  if (tutorialActive) {
+    const step = tutorialSteps[tutorialStepIndex];
+    if (step && step.id === 'rotate_shape') {
+      tutorialRotateAttempts += 1;
+    }
+  }
+
+  renderShop();
+  if (lastHoverGx >= 0 && lastHoverGy >= 0) {
+    updateHoverPreview(lastHoverGx, lastHoverGy);
+  }
+  advanceTutorialByAction('rotate_item');
+  if (tutorialActive) {
+    const currentStep = tutorialSteps[tutorialStepIndex];
+    if (currentStep) setTutorialFocus(currentStep);
+  }
+
+  closeRotatePicker();
+}
+
+function openRotatePicker(item = selectedItem, source = 'shop') {
+  if (!item || !Array.isArray(item.shapes) || item.shapes.length <= 1) return;
+
+  rotatePickerState = { item, source };
+
+  const overlay = document.getElementById('rotate-picker-overlay');
+  const title = document.getElementById('rotate-picker-title');
+  const optionsEl = document.getElementById('rotate-picker-options');
+  if (!overlay || !title || !optionsEl) return;
+
+  const activeShapeIdx = selectedItem && selectedItem.id === item.id ? selectedShapeIdx : 0;
+  title.textContent = `${item.name} - Choose Shape`;
+
+  optionsEl.innerHTML = item.shapes.map((_, idx) => {
+    const activeClass = idx === activeShapeIdx ? 'active' : '';
+    return `
+      <button class="rotate-option ${activeClass}" data-shape-idx="${idx}" type="button">
+        ${buildRotateShapePreview(item, idx)}
+        <div class="rotate-option-index">Shape ${idx + 1}</div>
+      </button>
+    `;
+  }).join('');
+
+  optionsEl.querySelectorAll('.rotate-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      applyRotateShape(Number(btn.dataset.shapeIdx));
+    });
+  });
+
+  overlay.style.display = 'flex';
+  overlay.classList.add('show');
+}
+
+window.openRotatePickerFromButton = function() {
+  if (!selectedItem) {
+    alert('Select or drag an item first.');
+    return;
+  }
+  openRotatePicker(selectedItem, movingItemState ? 'moving' : 'shop');
+};
+
+window.closeRotatePicker = closeRotatePicker;
 
 function clearGridDragListeners() {
   window.removeEventListener('pointermove', onGridDragMove);
@@ -2727,6 +2801,10 @@ function onGridDragMove(e) {
       selectedItem = gridDragState.item;
       selectedShapeIdx = sameItemSelected ? selectedShapeIdx : 0;
       renderShop();
+    } else if (gridDragState.source === 'parked') {
+      if (!movingItemState) {
+        startMovingParkedItem(gridDragState.parked);
+      }
     } else if (gridDragState.source === 'grid') {
       if (!movingItemState) {
         startMovingPlacedItem(gridDragState.occupant);
@@ -2754,6 +2832,19 @@ function onGridDragEnd() {
   if (!wasActive) {
     if (state.source === 'shop' && state.item.price <= budget) {
       selectItem(state.item);
+      if (state.item.shapes.length > 1) {
+        openRotatePicker(state.item, 'shop');
+      }
+    } else if (state.source === 'grid' && state.occupant) {
+      startMovingPlacedItem(state.occupant);
+      if (state.item.shapes.length > 1) {
+        openRotatePicker(state.item, 'moving');
+      }
+    } else if (state.source === 'parked' && state.parked) {
+      startMovingParkedItem(state.parked);
+      if (state.parked.item.shapes.length > 1) {
+        openRotatePicker(state.parked.item, 'moving');
+      }
     }
     return;
   }
@@ -2769,7 +2860,27 @@ function onGridDragEnd() {
   }
 
   if (state.source === 'grid') {
-    cancelMovingPlacement(true);
+    if (movingItemState?.source === 'grid') {
+      const parked = parkPlacedItemById(movingItemState.placedId);
+      movingItemState = null;
+      selectedItem = null;
+      selectedShapeIdx = 0;
+      clearHoverPreview();
+      renderShop();
+      renderGrid();
+      renderRules();
+      updateStats();
+      if (parked) {
+        renderPlacedItemsList();
+      }
+    } else {
+      cancelMovingPlacement(true);
+    }
+    return;
+  }
+
+  if (state.source === 'parked') {
+    cancelMovingPlacement(false);
     return;
   }
 
@@ -2777,14 +2888,30 @@ function onGridDragEnd() {
     selectedItem = state.previousSelection?.item || null;
     selectedShapeIdx = state.previousSelection?.shapeIdx || 0;
     renderShop();
+    return;
+  }
+
+  if (state.source === 'parked') {
+    if (state.item) {
+      const parked = state.parked;
+      if (parked) {
+        const parkedIdx = parkedItems.findIndex(p => p.parkedId === parked.parkedId);
+        if (parkedIdx !== -1) {
+          parkedItems[parkedIdx].shapeIdx = selectedShapeIdx;
+        }
+      }
+      renderPlacedItemsList();
+    }
   }
 }
 
 function beginShopItemDrag(e, item) {
-  if (dndState.draggingEl || gridDragState || e.button !== 0) return;
+  if (dndState.draggingEl || gridDragState) return;
+  if (typeof e.button === 'number' && e.button !== 0) return;
   if (item.price > budget) return;
 
   e.preventDefault();
+  closeRotatePicker();
 
   gridDragState = {
     source: 'shop',
@@ -2804,10 +2931,12 @@ function beginShopItemDrag(e, item) {
 }
 
 function beginGridItemDrag(e, occupant) {
-  if (dndState.draggingEl || gridDragState || e.button !== 0) return;
-  if (selectedItem || movingItemState) return;
+  if (dndState.draggingEl || gridDragState) return;
+  if (typeof e.button === 'number' && e.button !== 0) return;
+  if (movingItemState) return;
 
   e.preventDefault();
+  closeRotatePicker();
 
   gridDragState = {
     source: 'grid',
@@ -3051,9 +3180,13 @@ function handlePointerUp(e) {
   
   const sellBox = document.getElementById('sell-box');
   const sellRect = sellBox.getBoundingClientRect();
+  const listEl = document.getElementById('placed-items-list');
+  const listRect = listEl.getBoundingClientRect();
 
   const overSellBox = e.clientX >= sellRect.left && e.clientX <= sellRect.right &&
                       e.clientY >= sellRect.top && e.clientY <= sellRect.bottom;
+  const overPlacedList = e.clientX >= listRect.left && e.clientX <= listRect.right &&
+                         e.clientY >= listRect.top && e.clientY <= listRect.bottom;
 
   // Clean up visual feedback
   sellBox.classList.remove('drop-hover');
@@ -3063,7 +3196,6 @@ function handlePointerUp(e) {
   }
 
   if (dndState.dragSource === 'placed') {
-    const listEl = document.getElementById('placed-items-list');
     const piData = dndState.dragItemData;
 
     if (overSellBox && piData) {
@@ -3088,7 +3220,7 @@ function handlePointerUp(e) {
       renderRules();
       updateStats();
       updateBudgetDisplay();
-    } else {
+    } else if (overPlacedList) {
       // REORDER: default behavior
       if (dndState.placeholder && dndState.placeholder.parentNode === listEl) {
         listEl.insertBefore(dndState.draggingEl, dndState.placeholder);
@@ -3105,6 +3237,24 @@ function handlePointerUp(e) {
       
       renderPlacedItemsList();
       renderGrid();
+    } else if (piData) {
+      const parked = parkPlacedItemById(piData.placedId);
+      recordOperation('park_item', { itemId: piData.item.id, placedId: piData.placedId });
+      if (dndState.placeholder && dndState.placeholder.parentNode) {
+        dndState.placeholder.remove();
+      }
+      if (dndState.draggingEl && dndState.draggingEl.parentNode) {
+        dndState.draggingEl.remove();
+      }
+      selectedItem = null;
+      selectedShapeIdx = 0;
+      renderShop();
+      renderGrid();
+      renderRules();
+      updateStats();
+      if (parked) {
+        renderParkedItemsTray();
+      }
     }
   } else if (dndState.dragSource === 'storage') {
     // Storage no longer exists, just re-render (shouldn't happen now)
@@ -3263,6 +3413,38 @@ function renderPlacedItemsList() {
     const infoBtn = e.target.closest('.info-btn');
     if (infoBtn) document.getElementById('item-popover').classList.remove('show');
   };
+
+  renderParkedItemsTray();
+}
+
+function renderParkedItemsTray() {
+  const trayEl = document.getElementById('parked-items-list');
+  if (!trayEl) return;
+
+  trayEl.innerHTML = '';
+  const activeParkedId = movingItemState?.source === 'parked' ? movingItemState.parkedId : null;
+
+  parkedItems.forEach((pi, idx) => {
+    if (pi.parkedId === activeParkedId) return;
+    const tag = document.createElement('div');
+    tag.className = 'placed-item-tag parked-item-tag';
+    tag.dataset.id = pi.parkedId;
+    tag.dataset.idx = idx;
+    tag.innerHTML = `
+      <span class="order-badge">${idx + 1}</span>
+      <span class="item-emoji">
+        ${pi.item.image ? `<img src="${pi.item.image}" alt="${pi.item.name}" style="height:24px; width:24px; object-fit:contain;" draggable="false">` : pi.item.emoji}
+      </span>
+      <div class="info-btn">i</div>
+    `;
+
+    tag.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.info-btn')) return;
+      beginParkedItemDrag(e, pi);
+    });
+
+    trayEl.appendChild(tag);
+  });
 }
 
 // ????????????????????????????????????????????????????????
@@ -3314,6 +3496,7 @@ window.clearAllItems = function() {
   });
   budget += totalRefund;
   placedItems = [];
+  parkedItems = [];
   selectedItem = null;
   renderShop();
   renderGrid();
@@ -3434,16 +3617,58 @@ function startMovingPlacedItem(occupant) {
   }
 }
 
+function parkPlacedItemById(placedId) {
+  const idx = placedItems.findIndex(p => p.placedId === placedId);
+  if (idx === -1) return null;
+
+  const pi = placedItems[idx];
+  pi.cells.forEach(c => { playerGrid[c.y][c.x] = null; });
+  placedItems.splice(idx, 1);
+
+  const parkedItem = {
+    item: pi.item,
+    shapeIdx: pi.shapeIdx || 0,
+    parkedId: `${pi.placedId}-${Date.now()}`
+  };
+  parkedItems.push(parkedItem);
+  return parkedItem;
+}
+
+function startMovingParkedItem(parked) {
+  if (!parked) return;
+
+  const parkedIdx = parkedItems.findIndex(p => p.parkedId === parked.parkedId);
+  if (parkedIdx !== -1) {
+    parkedItems[parkedIdx].shapeIdx = parked.shapeIdx || 0;
+  }
+
+  movingItemState = {
+    source: 'parked',
+    parkedId: parked.parkedId,
+    item: parked.item,
+    shapeIdx: parked.shapeIdx || 0
+  };
+
+  selectedItem = parked.item;
+  selectedShapeIdx = parked.shapeIdx || 0;
+  recordOperation('pickup_floor_item', { itemId: parked.item.id, parkedId: parked.parkedId });
+  renderShop();
+  renderGrid();
+  updateStats();
+}
+
 function cancelMovingPlacement(restore = true) {
   if (!movingItemState) return;
 
-  const movedItem = placedItems.find(p => p.placedId === movingItemState.placedId);
-  if (restore && movedItem) {
-    movedItem.cells = cloneCells(movingItemState.originalCells);
-    movedItem.shapeIdx = movingItemState.shapeIdx;
-    movedItem.cells.forEach(c => {
-      playerGrid[c.y][c.x] = movedItem;
-    });
+  if (restore && movingItemState.source === 'grid') {
+    const movedItem = placedItems.find(p => p.placedId === movingItemState.placedId);
+    if (movedItem) {
+      movedItem.cells = cloneCells(movingItemState.originalCells);
+      movedItem.shapeIdx = movingItemState.shapeIdx;
+      movedItem.cells.forEach(c => {
+        playerGrid[c.y][c.x] = movedItem;
+      });
+    }
   }
 
   movingItemState = null;
@@ -3459,26 +3684,45 @@ function cancelMovingPlacement(restore = true) {
 function commitMovingPlacement(cells) {
   if (!movingItemState) return;
 
-  const movedItem = placedItems.find(p => p.placedId === movingItemState.placedId);
-  if (!movedItem) {
-    movingItemState = null;
-    selectedItem = null;
-    selectedShapeIdx = 0;
-    return;
+  if (movingItemState.source === 'parked') {
+    const parkedIdx = parkedItems.findIndex(p => p.parkedId === movingItemState.parkedId);
+    if (parkedIdx === -1) {
+      movingItemState = null;
+      selectedItem = null;
+      selectedShapeIdx = 0;
+      return;
+    }
+
+    const parked = parkedItems.splice(parkedIdx, 1)[0];
+    const placedId = ++placedIdCounter;
+    const placed = { item: parked.item, cells: cloneCells(cells), shapeIdx: selectedShapeIdx, placedId };
+    recordOperation('place_from_floor', { itemId: parked.item.id, cells: cloneCells(cells), shapeIdx: selectedShapeIdx });
+    placedItems.push(placed);
+    cells.forEach(c => {
+      playerGrid[c.y][c.x] = placed;
+    });
+  } else {
+    const movedItem = placedItems.find(p => p.placedId === movingItemState.placedId);
+    if (!movedItem) {
+      movingItemState = null;
+      selectedItem = null;
+      selectedShapeIdx = 0;
+      return;
+    }
+
+    movedItem.cells = cloneCells(cells);
+    movedItem.shapeIdx = selectedShapeIdx;
+    cells.forEach(c => {
+      playerGrid[c.y][c.x] = movedItem;
+    });
+
+    recordOperation('move_item', {
+      itemId: movedItem.item.id,
+      placedId: movedItem.placedId,
+      from: cloneCells(movingItemState.originalCells),
+      to: cloneCells(cells)
+    });
   }
-
-  movedItem.cells = cloneCells(cells);
-  movedItem.shapeIdx = selectedShapeIdx;
-  cells.forEach(c => {
-    playerGrid[c.y][c.x] = movedItem;
-  });
-
-  recordOperation('move_item', {
-    itemId: movedItem.item.id,
-    placedId: movedItem.placedId,
-    from: cloneCells(movingItemState.originalCells),
-    to: cloneCells(cells)
-  });
 
   movingItemState = null;
   selectedItem = null;
@@ -3544,8 +3788,38 @@ function onCellClick(gx, gy) {
   if (lastHoverGx >= 0 && lastHoverGy >= 0) updateHoverPreview(lastHoverGx, lastHoverGy);
 }
 
+function beginParkedItemDrag(e, parked) {
+  if (dndState.draggingEl || gridDragState) return;
+  if (typeof e.button === 'number' && e.button !== 0) return;
+
+  e.preventDefault();
+  closeRotatePicker();
+
+  gridDragState = {
+    source: 'parked',
+    item: parked.item,
+    parked,
+    startX: e.clientX,
+    startY: e.clientY,
+    active: false,
+    dropTarget: null,
+    ghostEl: null,
+    previousSelection: null
+  };
+
+  window.addEventListener('pointermove', onGridDragMove);
+  window.addEventListener('pointerup', onGridDragEnd);
+  window.addEventListener('pointercancel', onGridDragEnd);
+}
+
 // ?? Rotation ??
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && rotatePickerState) {
+    e.preventDefault();
+    closeRotatePicker();
+    return;
+  }
+
   if (e.key === 'Escape' && movingItemState) {
     e.preventDefault();
     cancelMovingPlacement(true);
@@ -3555,22 +3829,12 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') {
     if (!selectedItem) return;
     e.preventDefault(); // Prevent accidental scroll or other browser defaults
-    selectedShapeIdx = (selectedShapeIdx + 1) % selectedItem.shapes.length;
-    recordOperation('rotate_item', { itemId: selectedItem.id, shapeIdx: selectedShapeIdx });
-    if (tutorialActive) {
-      const step = tutorialSteps[tutorialStepIndex];
-      if (step && step.id === 'rotate_shape') {
-        tutorialRotateAttempts += 1;
-      }
+    if (selectedItem.shapes.length > 1) {
+      openRotatePicker(selectedItem, movingItemState ? 'moving' : 'shop');
+      return;
     }
-    renderShop();
-    if (lastHoverGx >= 0 && lastHoverGy >= 0)
-      updateHoverPreview(lastHoverGx, lastHoverGy);
-    advanceTutorialByAction('rotate_item');
-    if (tutorialActive) {
-      const currentStep = tutorialSteps[tutorialStepIndex];
-      if (currentStep) setTutorialFocus(currentStep);
-    }
+
+    selectedShapeIdx = 0;
   }
 });
 

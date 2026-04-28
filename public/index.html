@@ -106,8 +106,14 @@
   </div>
 
   <div class="grid-panel">
-    <div class="grid-label">
-      Drag item cards into the grid. Press <kbd>R</kbd> to rotate selected shape.
+    <div class="grid-controls-row">
+      <div class="grid-label">
+        Drag item cards into the grid. Press <kbd>R</kbd> or tap rotate button to choose shape.
+      </div>
+      <button id="btn-rotate-picker" class="btn-rotate-picker" onclick="openRotatePickerFromButton()" aria-label="Open shape rotation picker">
+        <span class="rotate-symbol">⟳</span>
+        <span>ROTATE SHAPE</span>
+      </button>
     </div>
     <div class="grid-bg-wrapper">
       <!-- A2 video plays behind the grid when entering the game -->
@@ -137,6 +143,10 @@
     <div class="prepare-team-container">
       <h3>PREPARE YOUR TEAM <span class="subtitle">(Drag to reorder fight sequence)</span></h3>
       <div class="placed-items-list" id="placed-items-list"></div>
+      <div class="parked-items-section">
+        <div class="parked-items-title">Floor / Blank Space</div>
+        <div class="parked-items-list" id="parked-items-list"></div>
+      </div>
     </div>
 
     <div class="action-bar">
@@ -251,5 +261,16 @@
 
   <!-- POP OVER TOOLTIP -->
   <div id="item-popover" class="item-popover"></div>
+
+  <!-- ROTATE PICKER -->
+  <div id="rotate-picker-overlay" class="rotate-picker-overlay" style="display:none;" onclick="if(event.target===this) closeRotatePicker()">
+    <div class="rotate-picker-card">
+      <div class="rotate-picker-header">
+        <h3 id="rotate-picker-title">Choose Rotation</h3>
+        <button class="rotate-picker-close" onclick="closeRotatePicker()" aria-label="Close rotate picker">×</button>
+      </div>
+      <div id="rotate-picker-options" class="rotate-picker-options"></div>
+    </div>
+  </div>
 </body>
 </html>
