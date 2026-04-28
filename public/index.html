@@ -90,6 +90,9 @@
         <span class="money" id="budget-display">$10</span>
       </div>
       <button class="btn-restock" id="btn-restock" onclick="restockShopBtn()">Restock $1</button>
+      <button id="btn-rotate-picker" class="btn-rotate-picker" onclick="openRotatePickerFromButton()" aria-label="Open shape rotation picker">
+        <span class="rotate-symbol">⟳</span>
+      </button>
     </div>
     <div id="shop-list"></div>
 
@@ -108,10 +111,6 @@
       <div class="grid-label">
         Drag item cards into the grid. Press <kbd>R</kbd> or tap rotate button to choose shape.
       </div>
-      <button id="btn-rotate-picker" class="btn-rotate-picker" onclick="openRotatePickerFromButton()" aria-label="Open shape rotation picker">
-        <span class="rotate-symbol">⟳</span>
-        <span>ROTATE SHAPE</span>
-      </button>
     </div>
     <div class="grid-bg-wrapper">
       <!-- A2 video plays behind the grid when entering the game -->

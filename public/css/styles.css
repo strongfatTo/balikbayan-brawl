@@ -1413,8 +1413,8 @@ body.tutorial-active.tutorial-step-row-effects .row-indicators .ri {
 .battle-sprite {
   position: absolute;
   bottom: 60px;
-  width: 100px;
-  height: 100px;
+  width: 180px;
+  height: 180px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1423,12 +1423,12 @@ body.tutorial-active.tutorial-step-row-effects .row-indicators .ri {
   z-index: 10;
 }
 .battle-sprite .sprite-emoji {
-  width: 56px;
-  height: 56px;
+  width: 168px;
+  height: 168px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 56px;
+  font-size: 168px;
   filter: drop-shadow(0 4px 8px rgba(0,0,0,0.5));
   transition: transform 0.15s;
 }
@@ -1848,19 +1848,19 @@ body.tutorial-active.tutorial-step-rotate #btn-rotate-picker {
   }
 
   .battle-sprite {
-    width: 72px;
-    height: 72px;
+    width: 130px;
+    height: 130px;
     bottom: 44px;
   }
 
   .battle-sprite .sprite-emoji {
-    width: 44px;
-    height: 44px;
-    font-size: 44px;
+    width: 120px;
+    height: 120px;
+    font-size: 120px;
   }
 
   .battle-sprite .sprite-name {
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .battle-sprite .hp-bar-bg {
@@ -1978,13 +1978,14 @@ body.tutorial-active.tutorial-step-rotate #btn-rotate-picker {
   }
 
   .grid-controls-row {
-    flex-direction: column;
-    align-items: stretch;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
   }
 
   .btn-rotate-picker {
-    width: 100%;
-    justify-content: center;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 }
 
@@ -2035,12 +2036,12 @@ body.tutorial-active.tutorial-step-rotate #btn-rotate-picker {
   }
 
   .btn-rotate-picker {
-    font-size: 14px;
-    padding: 10px 12px;
+    font-size: 12px;
+    padding: 6px 10px;
   }
 
   .btn-rotate-picker .rotate-symbol {
-    font-size: 24px;
+    font-size: 18px;
   }
 
   .stat-box {
