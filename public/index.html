@@ -33,16 +33,25 @@
     <span style="--x:78%; --delay:7s; --dur:15s; --size:32px;">👖</span>
     <span style="--x:90%; --delay:3s; --dur:19s; --size:25px;">🦷</span>
   </div>
-  <div class="login-card">
-    <h2>Welcome</h2>
-    <input type="text" id="player-name-input" placeholder="Enter your name..." maxlength="12">
-    <input type="text" id="room-id-input" placeholder="Enter Room ID..." maxlength="8">
-    <div class="login-actions">
-      <button class="btn btn-fight" onclick="joinRoom()">JOIN ROOM</button>
-      <button class="btn btn-clear" style="width:100%" onclick="createRoom()">CREATE ROOM</button>
-      <div class="or-divider">OR</div>
-      <button class="btn btn-clear" style="width:100%" onclick="startAIGame()">FIGHT AI</button>
-      <button class="btn btn-clear" style="width:100%" onclick="startTutorialMode()">NEW PLAYER GUIDE</button>
+  <div class="login-card menu-card" id="start-menu-card" data-menu-state="main">
+    <div class="menu-actions">
+      <button class="btn btn-fight" onclick="startAIGame()">Quick Start</button>
+      <button class="btn btn-clear" onclick="startTutorialMode()">Tutorial Guide</button>
+      <button class="btn btn-fight" id="multiplayer-toggle-btn" onclick="toggleMultiplayerMenu()">Multiplayer</button>
+    </div>
+    <div class="multiplayer-panel" id="multiplayer-panel" hidden>
+      <div class="menu-field-group">
+        <label for="player-name-input">Player Name</label>
+        <input type="text" id="player-name-input" placeholder="Enter your name..." maxlength="12">
+      </div>
+      <div class="menu-field-group">
+        <label for="room-id-input">Room ID</label>
+        <input type="text" id="room-id-input" placeholder="Enter Room ID..." maxlength="8">
+      </div>
+      <div class="login-actions multiplayer-actions">
+        <button class="btn btn-fight" onclick="joinRoom()">JOIN ROOM</button>
+        <button class="btn btn-clear" style="width:100%" onclick="createRoom()">CREATE ROOM</button>
+      </div>
     </div>
   </div>
 </div>

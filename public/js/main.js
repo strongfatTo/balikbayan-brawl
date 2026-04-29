@@ -579,6 +579,7 @@ function init() {
   document.getElementById('result-overlay').classList.remove('show');
   document.getElementById('tutorial-overlay').style.display = 'none';
   document.body.classList.remove('tutorial-active');
+  resetStartMenu();
 
   // Reset grid background state
   resetGridBackground();
@@ -2331,6 +2332,41 @@ window.startAIGame = function() {
 
 window.startTutorialMode = function() {
   beginAIGame({ tutorial: true });
+};
+
+function resetStartMenu() {
+  const menuCard = document.getElementById('start-menu-card');
+  const multiplayerPanel = document.getElementById('multiplayer-panel');
+  const multiplayerToggle = document.getElementById('multiplayer-toggle-btn');
+
+  if (menuCard) {
+    menuCard.dataset.menuState = 'main';
+  }
+  if (multiplayerPanel) {
+    multiplayerPanel.hidden = true;
+  }
+  if (multiplayerToggle) {
+    multiplayerToggle.textContent = 'Multiplayer';
+  }
+}
+
+window.toggleMultiplayerMenu = function(forceOpen) {
+  const menuCard = document.getElementById('start-menu-card');
+  const multiplayerPanel = document.getElementById('multiplayer-panel');
+  const multiplayerToggle = document.getElementById('multiplayer-toggle-btn');
+
+  if (!menuCard || !multiplayerPanel || !multiplayerToggle) return;
+
+  const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : multiplayerPanel.hidden;
+  multiplayerPanel.hidden = !shouldOpen;
+  menuCard.dataset.menuState = shouldOpen ? 'multiplayer' : 'main';
+  multiplayerToggle.textContent = shouldOpen ? 'Back' : 'Multiplayer';
+
+  if (shouldOpen) {
+    document.getElementById('player-name-input')?.focus();
+  } else {
+    multiplayerToggle.focus();
+  }
 };
 
 window.requestStartGame = async function() {

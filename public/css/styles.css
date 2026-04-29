@@ -1,7 +1,9 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background: #1a1a2e;
+  font-family: 'Trebuchet MS', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background:
+    radial-gradient(circle at top, rgba(34, 74, 129, 0.95) 0%, rgba(25, 38, 74, 0.9) 28%, rgba(18, 20, 39, 0.98) 62%),
+    linear-gradient(180deg, #1b3560 0%, #121528 100%);
   color: #eee;
   min-height: 100vh;
   overflow-x: hidden;
@@ -138,20 +140,26 @@ body {
 /* ── Header ── */
 .header {
   text-align: center;
-  padding: 18px;
-  background: linear-gradient(135deg, #16213e, #0f3460);
-  border-bottom: 3px solid #e94560;
+  padding: 16px 18px 14px;
+  background: linear-gradient(180deg, #11335f 0%, #0d284c 100%);
+  border-bottom: 4px solid #e94560;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
 }
-.header h1 { font-size: 40px; color: #e94560; letter-spacing: 3px; }
-.header p { font-size: 16px; color: #a8a8b8; margin-top: 4px; }
+.header h1 {
+  font-size: clamp(42px, 4.8vw, 58px);
+  color: #ff556d;
+  letter-spacing: 4px;
+  font-weight: 900;
+}
+.header p { font-size: 17px; color: #c8cfdd; margin-top: 5px; }
 
 /* ── Phase Containers ── */
 .phase-container {
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: calc(100vh - 100px);
-  padding: 20px;
+  min-height: calc(100vh - 98px);
+  padding: 24px 20px 40px;
 }
 
 #login-phase {
@@ -165,30 +173,7 @@ body {
 }
 
 .welcome-floaters {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-  z-index: 1;
-}
-
-.welcome-floaters span {
-  position: absolute;
-  left: var(--x);
-  bottom: -60px;
-  font-size: var(--size);
-  opacity: 0.18;
-  filter: drop-shadow(0 0 10px rgba(78, 204, 163, 0.15));
-  animation: float-up var(--dur) linear infinite;
-  animation-delay: var(--delay);
-  transform: translateX(-50%);
-}
-
-@keyframes float-up {
-  0% { transform: translate(-50%, 0) rotate(-8deg); opacity: 0; }
-  10% { opacity: 0.2; }
-  50% { opacity: 0.26; }
-  100% { transform: translate(-50%, -115vh) rotate(8deg); opacity: 0; }
+  display: none;
 }
 
 /* ── Login/Lobby Cards ── */
@@ -201,6 +186,79 @@ body {
   max-width: 500px;
   text-align: center;
   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+.login-card.menu-card {
+  width: min(540px, 92vw);
+  max-width: 540px;
+  padding: 42px 40px 36px;
+  border-radius: 18px;
+  border: 3px solid rgba(15, 52, 96, 0.92);
+  background: linear-gradient(180deg, rgba(22, 33, 62, 0.98), rgba(18, 27, 49, 0.98));
+  box-shadow:
+    0 24px 50px rgba(0, 0, 0, 0.45),
+    inset 0 0 0 1px rgba(78, 204, 163, 0.08);
+}
+.menu-hero {
+  margin-bottom: 28px;
+}
+.menu-hero h2 {
+  margin-bottom: 0;
+  font-size: clamp(30px, 3.4vw, 38px);
+  color: #ff5b73;
+}
+.menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.menu-actions .btn {
+  width: 100%;
+  min-height: 78px;
+  padding: 18px 26px;
+  border-radius: 16px;
+  font-size: clamp(24px, 2.8vw, 30px);
+  line-height: 1;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.menu-actions .btn-fight {
+  background: linear-gradient(180deg, #ff5f63 0%, #ff4f5e 100%);
+  box-shadow: 0 10px 24px rgba(255, 92, 102, 0.2);
+}
+.menu-actions .btn-fight:hover {
+  background: linear-gradient(180deg, #ff6f72 0%, #ff5f68 100%);
+}
+.menu-actions .btn-clear {
+  background: linear-gradient(180deg, #69696f 0%, #585861 100%);
+  color: #fff;
+}
+.menu-actions .btn-clear:hover {
+  background: linear-gradient(180deg, #76767d 0%, #66666f 100%);
+}
+.multiplayer-panel {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(240, 192, 64, 0.16);
+  text-align: left;
+}
+.menu-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.menu-field-group label {
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #f0c040;
+}
+.menu-field-group input {
+  width: 100%;
+  margin-bottom: 0;
+}
+.multiplayer-actions {
+  margin-top: 14px;
 }
 .login-card h2, .lobby-card h2 { color: #e94560; margin-bottom: 24px; font-size: 32px; }
 .lobby-header-actions {
