@@ -2644,6 +2644,24 @@ function renderShop() {
     }
     card.appendChild(preview);
 
+    if (selectedItem && selectedItem.id === item.id && item.shapes.length > 1) {
+      const rotateBtn = document.createElement('button');
+      rotateBtn.type = 'button';
+      rotateBtn.className = 'item-rotate-btn';
+      rotateBtn.textContent = '⟳';
+      rotateBtn.title = 'Rotate item';
+      rotateBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      rotateBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openRotatePicker(item, 'shop');
+      });
+      card.appendChild(rotateBtn);
+    }
+
     const info = document.createElement('div');
     info.className = 'item-info';
     info.innerHTML = `
@@ -2664,8 +2682,14 @@ function renderShop() {
     card.appendChild(price);
 
     card.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.info-btn')) return;
+      if (e.target.closest('.info-btn') || e.target.closest('.item-rotate-btn')) return;
       beginShopItemDrag(e, item);
+    });
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.info-btn') || e.target.closest('.item-rotate-btn')) return;
+      if (gridDragState || dndState.draggingEl) return;
+      selectItem(item);
+      openRotatePickerForItem(item, 'shop');
     });
     container.appendChild(card);
   });
@@ -2683,15 +2707,13 @@ function selectItem(item) {
     cancelMovingPlacement(true);
   }
   if (item.price > budget) return;
-  if (selectedItem && selectedItem.id === item.id) {
-    selectedItem = null;
-    selectedShapeIdx = 0;
-  } else {
-    selectedItem = item;
+  if (!selectedItem || selectedItem.id !== item.id) {
     selectedShapeIdx = 0;
     recordOperation('select_item', { itemId: item.id });
   }
+  selectedItem = item;
   renderShop();
+  updateMobileToolbar();
   advanceTutorialByAction('select_item');
 }
 
@@ -2716,6 +2738,20 @@ function closeRotatePicker() {
   overlay.classList.remove('show');
   overlay.style.display = 'none';
   rotatePickerState = null;
+}
+
+function openRotatePickerForItem(item, source = 'shop') {
+  if (!item || !Array.isArray(item.shapes) || item.shapes.length <= 1) return;
+  setTimeout(() => {
+    if (selectedItem && selectedItem.id === item.id) {
+      const rotateBtn = document.querySelector('.item-card.selected .item-rotate-btn');
+      if (rotateBtn) {
+        rotateBtn.click();
+        return;
+      }
+      openRotatePicker(item, source);
+    }
+  }, 0);
 }
 
 function applyRotateShape(shapeIdx) {
@@ -2800,6 +2836,7 @@ function resetGridDragState() {
     gridDragState.ghostEl.parentNode.removeChild(gridDragState.ghostEl);
   }
   gridDragState = null;
+  updateShopDragState();
 }
 
 function createGridDragGhost(item) {
@@ -2901,20 +2938,16 @@ function onGridDragEnd() {
   if (!wasActive) {
     if (state.source === 'shop' && state.item.price <= budget) {
       selectItem(state.item);
-      if (state.item.shapes.length > 1) {
-        openRotatePicker(state.item, 'shop');
-      }
+      openRotatePickerForItem(state.item, 'shop');
     } else if (state.source === 'grid' && state.occupant) {
       startMovingPlacedItem(state.occupant);
-      if (state.item.shapes.length > 1) {
-        openRotatePicker(state.item, 'moving');
+      if (state.occupant.item.shapes.length > 1) {
+        openRotatePickerForItem(state.occupant.item, 'moving');
       }
     } else if (state.source === 'parked' && state.parked) {
       startMovingParkedItem(state.parked);
-      if (state.parked.item.shapes.length > 1) {
-        openRotatePicker(state.parked.item, 'moving');
-      }
     }
+    updateShopDragState();
     return;
   }
 
@@ -2945,18 +2978,24 @@ function onGridDragEnd() {
     } else {
       cancelMovingPlacement(true);
     }
+    updateShopDragState();
     return;
   }
 
   if (state.source === 'parked') {
     cancelMovingPlacement(false);
+    updateShopDragState();
     return;
   }
 
   if (state.source === 'shop') {
-    selectedItem = state.previousSelection?.item || null;
-    selectedShapeIdx = state.previousSelection?.shapeIdx || 0;
+    selectedItem = state.item;
+    if (!state.previousSelection || state.previousSelection.item?.id !== state.item.id) {
+      selectedShapeIdx = 0;
+    }
     renderShop();
+    updateMobileToolbar();
+    updateShopDragState();
     return;
   }
 
@@ -2972,6 +3011,8 @@ function onGridDragEnd() {
       renderPlacedItemsList();
     }
   }
+
+  updateShopDragState();
 }
 
 function beginShopItemDrag(e, item) {
@@ -2993,6 +3034,8 @@ function beginShopItemDrag(e, item) {
     ghostEl: null,
     previousSelection: null
   };
+
+  updateShopDragState();
 
   window.addEventListener('pointermove', onGridDragMove);
   window.addEventListener('pointerup', onGridDragEnd);
@@ -3018,6 +3061,8 @@ function beginGridItemDrag(e, occupant) {
     ghostEl: null,
     previousSelection: null
   };
+
+  updateShopDragState();
 
   window.addEventListener('pointermove', onGridDragMove);
   window.addEventListener('pointerup', onGridDragEnd);
@@ -3126,13 +3171,6 @@ function buildGrid() {
     if (!t) return;
     onCellClick(parseInt(t.dataset.x), parseInt(t.dataset.y));
   });
-  grid.addEventListener('contextmenu', (e) => {
-    const t = e.target.closest('.cell[data-x]');
-    if (!t) return;
-    const gx = parseInt(t.dataset.x), gy = parseInt(t.dataset.y);
-    const occupant = playerGrid[gy][gx];
-    if (occupant) { e.preventDefault(); removeItemFromGrid(occupant.placedId); }
-  });
 }
 
 function renderGrid() {
@@ -3178,6 +3216,13 @@ let dndState = {
   dragSource: null,    // 'placed'
   dragItemData: null   // the placed item data
 };
+
+function updateShopDragState() {
+  const shopPhase = document.getElementById('shop-phase');
+  if (!shopPhase) return;
+  const movingPlacedItem = !!dndState.draggingEl || !!(gridDragState && gridDragState.source !== 'shop');
+  shopPhase.classList.toggle('drag-active', movingPlacedItem);
+}
 
 function handlePointerMove(e) {
   if (!dndState.draggingEl || !dndState.ghostEl) return;
@@ -3330,6 +3375,7 @@ function handlePointerUp(e) {
   }
 
   dndState = { draggingEl: null, ghostEl: null, placeholder: null, dragOffset: { x: 0, y: 0 }, dragSource: null, dragItemData: null };
+  updateShopDragState();
   
   window.removeEventListener('pointermove', handlePointerMove);
   window.removeEventListener('pointerup', handlePointerUp);
@@ -3441,6 +3487,8 @@ function renderPlacedItemsList() {
       dndState.ghostEl.style.transform = `translate(${initX}px, ${initY}px) scale(0.95)`;
       
       document.body.appendChild(dndState.ghostEl);
+
+      updateShopDragState();
 
       dndState.placeholder = document.createElement('div');
       dndState.placeholder.className = 'placed-item-tag placeholder';
@@ -3875,6 +3923,8 @@ function beginParkedItemDrag(e, parked) {
     ghostEl: null,
     previousSelection: null
   };
+
+  updateShopDragState();
 
   window.addEventListener('pointermove', onGridDragMove);
   window.addEventListener('pointerup', onGridDragEnd);

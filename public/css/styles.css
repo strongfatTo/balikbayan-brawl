@@ -575,10 +575,38 @@ body {
   gap: 14px;
   align-items: center;
   touch-action: none;
+  position: relative;
 }
 .item-card:hover { border-color: #e94560; transform: translateX(4px); }
 .item-card.selected { border-color: #4ecca3; background: #1a2a4a; box-shadow: 0 0 16px rgba(78,204,163,0.3); }
 .item-card.disabled { opacity: 0.35; pointer-events: none; }
+
+.item-rotate-btn {
+  position: static;
+  width: 34px;
+  height: 34px;
+  border: 2px solid #f0c040;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #f0c040 0%, #d89d16 100%);
+  color: #1a1a2e;
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.28);
+  z-index: 2;
+  flex-shrink: 0;
+  margin: 0 4px;
+}
+.item-card.selected .item-rotate-btn {
+  display: inline-flex;
+}
+.item-rotate-btn:hover {
+  transform: scale(1.08);
+}
 
 .item-shape-preview {
   width: clamp(50px, 8vmin, 80px);
@@ -1800,10 +1828,13 @@ body.tutorial-active.tutorial-step-row-effects .row-indicators .ri {
   text-align: center;
   transition: all 0.25s;
   min-height: 56px;
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: center;
   gap: 8px;
+}
+#shop-phase.drag-active .sell-box {
+  display: flex;
 }
 .sell-box .sell-icon { font-size: 22px; }
 .sell-box .sell-label {
@@ -2533,6 +2564,9 @@ body.tutorial-active.tutorial-step-rotate #btn-rotate-picker {
   /* Mobile sell box - hide on mobile use icon instead */
   .sell-box {
     display: none;
+  }
+  #shop-phase.drag-active .sell-box {
+    display: flex;
   }
 
   /* Mobile stats row - simplified */
